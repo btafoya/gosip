@@ -121,7 +121,7 @@ CREATE TABLE messages (
 CREATE TABLE auto_replies (
     id INTEGER PRIMARY KEY,
     did_id INTEGER REFERENCES dids(id) ON DELETE CASCADE,
-    trigger_type TEXT CHECK(trigger_type IN ('dnd', 'after_hours', 'keyword')),
+    trigger_type TEXT CHECK(trigger_type IN ('dnd', 'after_hours', 'keyword', 'always')),
     trigger_data JSON,
     reply_text TEXT NOT NULL,
     enabled BOOLEAN DEFAULT TRUE

@@ -38,13 +38,22 @@ func NewNotifier(cfg *config.Config, database *db.DB) *Notifier {
 func (n *Notifier) SendVoicemailNotification(voicemail *models.Voicemail) error {
 	ctx := context.Background()
 
-	// Get DID info
-	did, err := n.database.DIDs.GetByID(ctx, voicemail.DIDID)
-	if err != nil {
-		return fmt.Errorf("failed to get DID: %w", err)
+	// Get DID info - UserID is a pointer
+	var did *models.DID
+	var err error
+	if voicemail.UserID != nil {
+		did, err = n.database.DIDs.GetByID(ctx, *voicemail.UserID)
+		if err != nil {
+			return fmt.Errorf("failed to get DID: %w", err)
+		}
 	}
 
-	subject := fmt.Sprintf("New Voicemail from %s", voicemail.CallerID)
+	didNumber := ""
+	if did != nil {
+		didNumber = did.Number
+	}
+
+	subject := fmt.Sprintf("New Voicemail from %s", voicemail.FromNumber)
 	body := fmt.Sprintf(`
 You have a new voicemail:
 
@@ -56,27 +65,30 @@ Time: %s
 %s
 
 Listen to this voicemail at: %s
-`, voicemail.CallerID, did.Number, voicemail.Duration,
+`, voicemail.FromNumber, didNumber, voicemail.Duration,
 	voicemail.CreatedAt.Format("Jan 2, 2006 3:04 PM"),
 	func() string {
-		if voicemail.TranscriptText != "" {
-			return "Transcription:\n" + voicemail.TranscriptText
+		if voicemail.Transcript != "" {
+			return "Transcription:\n" + voicemail.Transcript
 		}
 		return ""
 	}(),
-	voicemail.RecordingURL)
+	voicemail.AudioURL)
 
-	// Send email notification
+	// Send email notification - get notification email from database config
 	if n.cfg.SMTPHost != "" {
-		if err := n.SendEmail(n.cfg.NotificationEmail, subject, body); err != nil {
-			// Log but don't fail
-			fmt.Printf("Failed to send email notification: %v\n", err)
+		notificationEmail, _ := n.database.Config.Get(ctx, "notification_email")
+		if notificationEmail != "" {
+			if err := n.SendEmail(notificationEmail, subject, body); err != nil {
+				// Log but don't fail
+				fmt.Printf("Failed to send email notification: %v\n", err)
+			}
 		}
 	}
 
 	// Send push notification
 	if n.cfg.GotifyURL != "" {
-		if err := n.SendPush(subject, fmt.Sprintf("From %s - %d seconds", voicemail.CallerID, voicemail.Duration)); err != nil {
+		if err := n.SendPush(subject, fmt.Sprintf("From %s - %d seconds", voicemail.FromNumber, voicemail.Duration)); err != nil {
 			fmt.Printf("Failed to send push notification: %v\n", err)
 		}
 	}
@@ -88,13 +100,28 @@ Listen to this voicemail at: %s
 func (n *Notifier) SendSMSNotification(message *models.Message) error {
 	ctx := context.Background()
 
-	// Get DID info
-	did, err := n.database.DIDs.GetByID(ctx, message.DIDID)
-	if err != nil {
-		return fmt.Errorf("failed to get DID: %w", err)
+	// Get DID info - DIDID is a pointer
+	var did *models.DID
+	var err error
+	if message.DIDID != nil {
+		did, err = n.database.DIDs.GetByID(ctx, *message.DIDID)
+		if err != nil {
+			return fmt.Errorf("failed to get DID: %w", err)
+		}
 	}
 
-	subject := fmt.Sprintf("New SMS from %s", message.RemoteNumber)
+	didNumber := ""
+	if did != nil {
+		didNumber = did.Number
+	}
+
+	// Determine remote number based on direction
+	remoteNumber := message.FromNumber
+	if message.Direction == "outbound" {
+		remoteNumber = message.ToNumber
+	}
+
+	subject := fmt.Sprintf("New SMS from %s", remoteNumber)
 	body := fmt.Sprintf(`
 You have a new text message:
 
@@ -104,7 +131,7 @@ Time: %s
 
 Message:
 %s
-`, message.RemoteNumber, did.Number, message.CreatedAt.Format("Jan 2, 2006 3:04 PM"), message.Body)
+`, remoteNumber, didNumber, message.CreatedAt.Format("Jan 2, 2006 3:04 PM"), message.Body)
 
 	// Check for media
 	var mediaURLs []string
@@ -118,10 +145,13 @@ Message:
 		}
 	}
 
-	// Send email notification
+	// Send email notification - get notification email from database config
 	if n.cfg.SMTPHost != "" {
-		if err := n.SendEmail(n.cfg.NotificationEmail, subject, body); err != nil {
-			fmt.Printf("Failed to send email notification: %v\n", err)
+		notificationEmail, _ := n.database.Config.Get(ctx, "notification_email")
+		if notificationEmail != "" {
+			if err := n.SendEmail(notificationEmail, subject, body); err != nil {
+				fmt.Printf("Failed to send email notification: %v\n", err)
+			}
 		}
 	}
 

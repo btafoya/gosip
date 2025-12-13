@@ -4,20 +4,10 @@ package api
 import (
 	"net/http"
 
-	"github.com/btafoya/gosip/internal/config"
-	"github.com/btafoya/gosip/internal/db"
-	"github.com/btafoya/gosip/pkg/sip"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 )
-
-// Dependencies holds all dependencies needed by API handlers
-type Dependencies struct {
-	Config *config.Config
-	DB     *db.DB
-	SIP    *sip.Server
-}
 
 // NewRouter creates and configures the API router
 func NewRouter(deps *Dependencies) chi.Router {

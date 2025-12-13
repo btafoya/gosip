@@ -57,7 +57,10 @@ func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Get registration status for each device
 	var response []*DeviceResponse
 	for _, d := range devices {
-		online := h.deps.SIP.GetRegistrar().IsRegistered(r.Context(), d.ID)
+		online := false
+		if h.deps.SIP != nil && h.deps.SIP.GetRegistrar() != nil {
+			online = h.deps.SIP.GetRegistrar().IsRegistered(r.Context(), d.ID)
+		}
 		response = append(response, toDeviceResponse(d, online))
 	}
 
@@ -143,7 +146,10 @@ func (h *DeviceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	online := h.deps.SIP.GetRegistrar().IsRegistered(r.Context(), device.ID)
+	online := false
+	if h.deps.SIP != nil && h.deps.SIP.GetRegistrar() != nil {
+		online = h.deps.SIP.GetRegistrar().IsRegistered(r.Context(), device.ID)
+	}
 	WriteJSON(w, http.StatusOK, toDeviceResponse(device, online))
 }
 
@@ -201,7 +207,10 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	online := h.deps.SIP.GetRegistrar().IsRegistered(r.Context(), device.ID)
+	online := false
+	if h.deps.SIP != nil && h.deps.SIP.GetRegistrar() != nil {
+		online = h.deps.SIP.GetRegistrar().IsRegistered(r.Context(), device.ID)
+	}
 	WriteJSON(w, http.StatusOK, toDeviceResponse(device, online))
 }
 
@@ -223,6 +232,10 @@ func (h *DeviceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // GetRegistrations returns all active SIP registrations
 func (h *DeviceHandler) GetRegistrations(w http.ResponseWriter, r *http.Request) {
+	if h.deps.SIP == nil {
+		WriteJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
 	registrations, err := h.deps.SIP.GetActiveRegistrations(r.Context())
 	if err != nil {
 		WriteInternalError(w)

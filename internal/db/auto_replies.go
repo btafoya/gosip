@@ -41,16 +41,22 @@ func (r *AutoReplyRepository) Create(ctx context.Context, ar *models.AutoReply) 
 // GetByID retrieves an auto-reply rule by ID
 func (r *AutoReplyRepository) GetByID(ctx context.Context, id int64) (*models.AutoReply, error) {
 	ar := &models.AutoReply{}
+	var didID sql.NullInt64
+	var triggerData []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, did_id, trigger_type, trigger_data, reply_text, enabled
 		FROM auto_replies WHERE id = ?
-	`, id).Scan(&ar.ID, &ar.DIDID, &ar.TriggerType, &ar.TriggerData, &ar.ReplyText, &ar.Enabled)
+	`, id).Scan(&ar.ID, &didID, &ar.TriggerType, &triggerData, &ar.ReplyText, &ar.Enabled)
 	if err == sql.ErrNoRows {
 		return nil, ErrAutoReplyNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if didID.Valid {
+		ar.DIDID = &didID.Int64
+	}
+	ar.TriggerData = triggerData
 	return ar, nil
 }
 
@@ -84,9 +90,15 @@ func (r *AutoReplyRepository) List(ctx context.Context) ([]*models.AutoReply, er
 	var ars []*models.AutoReply
 	for rows.Next() {
 		ar := &models.AutoReply{}
-		if err := rows.Scan(&ar.ID, &ar.DIDID, &ar.TriggerType, &ar.TriggerData, &ar.ReplyText, &ar.Enabled); err != nil {
+		var didID sql.NullInt64
+		var triggerData []byte
+		if err := rows.Scan(&ar.ID, &didID, &ar.TriggerType, &triggerData, &ar.ReplyText, &ar.Enabled); err != nil {
 			return nil, err
 		}
+		if didID.Valid {
+			ar.DIDID = &didID.Int64
+		}
+		ar.TriggerData = triggerData
 		ars = append(ars, ar)
 	}
 	return ars, rows.Err()
@@ -106,9 +118,15 @@ func (r *AutoReplyRepository) ListByDID(ctx context.Context, didID int64) ([]*mo
 	var ars []*models.AutoReply
 	for rows.Next() {
 		ar := &models.AutoReply{}
-		if err := rows.Scan(&ar.ID, &ar.DIDID, &ar.TriggerType, &ar.TriggerData, &ar.ReplyText, &ar.Enabled); err != nil {
+		var nullDIDID sql.NullInt64
+		var triggerData []byte
+		if err := rows.Scan(&ar.ID, &nullDIDID, &ar.TriggerType, &triggerData, &ar.ReplyText, &ar.Enabled); err != nil {
 			return nil, err
 		}
+		if nullDIDID.Valid {
+			ar.DIDID = &nullDIDID.Int64
+		}
+		ar.TriggerData = triggerData
 		ars = append(ars, ar)
 	}
 	return ars, rows.Err()
@@ -128,9 +146,15 @@ func (r *AutoReplyRepository) ListEnabled(ctx context.Context) ([]*models.AutoRe
 	var ars []*models.AutoReply
 	for rows.Next() {
 		ar := &models.AutoReply{}
-		if err := rows.Scan(&ar.ID, &ar.DIDID, &ar.TriggerType, &ar.TriggerData, &ar.ReplyText, &ar.Enabled); err != nil {
+		var didID sql.NullInt64
+		var triggerData []byte
+		if err := rows.Scan(&ar.ID, &didID, &ar.TriggerType, &triggerData, &ar.ReplyText, &ar.Enabled); err != nil {
 			return nil, err
 		}
+		if didID.Valid {
+			ar.DIDID = &didID.Int64
+		}
+		ar.TriggerData = triggerData
 		ars = append(ars, ar)
 	}
 	return ars, rows.Err()
@@ -150,9 +174,15 @@ func (r *AutoReplyRepository) ListEnabledByDID(ctx context.Context, didID int64)
 	var ars []*models.AutoReply
 	for rows.Next() {
 		ar := &models.AutoReply{}
-		if err := rows.Scan(&ar.ID, &ar.DIDID, &ar.TriggerType, &ar.TriggerData, &ar.ReplyText, &ar.Enabled); err != nil {
+		var nullDIDID sql.NullInt64
+		var triggerData []byte
+		if err := rows.Scan(&ar.ID, &nullDIDID, &ar.TriggerType, &triggerData, &ar.ReplyText, &ar.Enabled); err != nil {
 			return nil, err
 		}
+		if nullDIDID.Valid {
+			ar.DIDID = &nullDIDID.Int64
+		}
+		ar.TriggerData = triggerData
 		ars = append(ars, ar)
 	}
 	return ars, rows.Err()
@@ -161,15 +191,21 @@ func (r *AutoReplyRepository) ListEnabledByDID(ctx context.Context, didID int64)
 // GetByTriggerType returns an enabled auto-reply rule by DID and trigger type
 func (r *AutoReplyRepository) GetByTriggerType(ctx context.Context, didID int64, triggerType string) (*models.AutoReply, error) {
 	ar := &models.AutoReply{}
+	var nullDIDID sql.NullInt64
+	var triggerData []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, did_id, trigger_type, trigger_data, reply_text, enabled
 		FROM auto_replies WHERE did_id = ? AND trigger_type = ? AND enabled = 1
-	`, didID, triggerType).Scan(&ar.ID, &ar.DIDID, &ar.TriggerType, &ar.TriggerData, &ar.ReplyText, &ar.Enabled)
+	`, didID, triggerType).Scan(&ar.ID, &nullDIDID, &ar.TriggerType, &triggerData, &ar.ReplyText, &ar.Enabled)
 	if err == sql.ErrNoRows {
 		return nil, ErrAutoReplyNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if nullDIDID.Valid {
+		ar.DIDID = &nullDIDID.Int64
+	}
+	ar.TriggerData = triggerData
 	return ar, nil
 }

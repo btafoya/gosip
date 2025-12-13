@@ -6,6 +6,7 @@ import (
 
 	"github.com/btafoya/gosip/internal/config"
 	"github.com/btafoya/gosip/internal/db"
+	"github.com/btafoya/gosip/internal/models"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -46,26 +47,59 @@ func (h *VoicemailHandler) List(w http.ResponseWriter, r *http.Request) {
 		limit = config.MaxPageSize
 	}
 
-	filter := db.VoicemailFilter{
-		Limit:      limit,
-		Offset:     offset,
-		UnreadOnly: unreadOnly,
-	}
+	var voicemails []*models.Voicemail
+	var err error
+	var total int
 
-	if didIDStr != "" {
-		didID, err := strconv.ParseInt(didIDStr, 10, 64)
+	// Handle filtering
+	if unreadOnly {
+		var userID *int64
+		if didIDStr != "" {
+			uid, parseErr := strconv.ParseInt(didIDStr, 10, 64)
+			if parseErr == nil {
+				userID = &uid
+			}
+		}
+		voicemails, err = h.deps.DB.Voicemails.ListUnread(r.Context(), userID)
+		if err != nil {
+			WriteInternalError(w)
+			return
+		}
+		total = len(voicemails)
+		// Apply manual pagination to unread list
+		end := offset + limit
+		if end > len(voicemails) {
+			end = len(voicemails)
+		}
+		if offset < len(voicemails) {
+			voicemails = voicemails[offset:end]
+		} else {
+			voicemails = nil
+		}
+	} else if didIDStr != "" {
+		userID, parseErr := strconv.ParseInt(didIDStr, 10, 64)
+		if parseErr == nil {
+			voicemails, err = h.deps.DB.Voicemails.ListByUser(r.Context(), userID, limit, offset)
+			if err == nil {
+				total, _ = h.deps.DB.Voicemails.CountByUser(r.Context(), userID)
+			}
+		} else {
+			voicemails, err = h.deps.DB.Voicemails.List(r.Context(), limit, offset)
+			if err == nil {
+				total, _ = h.deps.DB.Voicemails.Count(r.Context())
+			}
+		}
+	} else {
+		voicemails, err = h.deps.DB.Voicemails.List(r.Context(), limit, offset)
 		if err == nil {
-			filter.DIDID = &didID
+			total, _ = h.deps.DB.Voicemails.Count(r.Context())
 		}
 	}
 
-	voicemails, err := h.deps.DB.Voicemails.List(r.Context(), filter)
 	if err != nil {
 		WriteInternalError(w)
 		return
 	}
-
-	total, _ := h.deps.DB.Voicemails.Count(r.Context(), filter)
 
 	var response []*VoicemailResponse
 	for _, v := range voicemails {
@@ -134,7 +168,7 @@ func (h *VoicemailHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // GetUnreadCount returns the count of unread voicemails
 func (h *VoicemailHandler) GetUnreadCount(w http.ResponseWriter, r *http.Request) {
-	count, err := h.deps.DB.Voicemails.CountUnread(r.Context())
+	count, err := h.deps.DB.Voicemails.CountUnread(r.Context(), nil)
 	if err != nil {
 		WriteInternalError(w)
 		return
@@ -143,16 +177,40 @@ func (h *VoicemailHandler) GetUnreadCount(w http.ResponseWriter, r *http.Request
 	WriteJSON(w, http.StatusOK, map[string]int{"unread_count": count})
 }
 
-func toVoicemailResponse(v *db.Voicemail) *VoicemailResponse {
+// ListUnread returns only unread voicemails
+func (h *VoicemailHandler) ListUnread(w http.ResponseWriter, r *http.Request) {
+	voicemails, err := h.deps.DB.Voicemails.ListUnread(r.Context(), nil)
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+
+	var response []*VoicemailResponse
+	for _, v := range voicemails {
+		response = append(response, toVoicemailResponse(v))
+	}
+
+	WriteJSON(w, http.StatusOK, response)
+}
+
+// MarkAsRead marks a voicemail as read (alias for MarkRead)
+func (h *VoicemailHandler) MarkAsRead(w http.ResponseWriter, r *http.Request) {
+	h.MarkRead(w, r)
+}
+
+func toVoicemailResponse(v *models.Voicemail) *VoicemailResponse {
+	var didID int64
+	if v.UserID != nil {
+		didID = *v.UserID
+	}
 	return &VoicemailResponse{
-		ID:                 v.ID,
-		DIDID:              v.DIDID,
-		CallerID:           v.CallerID,
-		Duration:           v.Duration,
-		RecordingURL:       v.RecordingURL,
-		TranscriptText:     v.TranscriptText,
-		IsRead:             v.IsRead,
-		CreatedAt:          v.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		TwilioRecordingSID: v.TwilioRecordingSID,
+		ID:             v.ID,
+		DIDID:          didID,
+		CallerID:       v.FromNumber,
+		Duration:       v.Duration,
+		RecordingURL:   v.AudioURL,
+		TranscriptText: v.Transcript,
+		IsRead:         v.IsRead,
+		CreatedAt:      v.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 }

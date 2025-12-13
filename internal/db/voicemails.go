@@ -73,8 +73,18 @@ func (r *VoicemailRepository) Delete(ctx context.Context, id int64) error {
 
 // MarkAsRead marks a voicemail as read
 func (r *VoicemailRepository) MarkAsRead(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE voicemails SET is_read = 1 WHERE id = ?`, id)
-	return err
+	result, err := r.db.ExecContext(ctx, `UPDATE voicemails SET is_read = 1 WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrVoicemailNotFound
+	}
+	return nil
 }
 
 // MarkAsUnread marks a voicemail as unread
@@ -178,6 +188,13 @@ func (r *VoicemailRepository) CountUnread(ctx context.Context, userID *int64) (i
 func (r *VoicemailRepository) Count(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM voicemails`).Scan(&count)
+	return count, err
+}
+
+// CountByUser returns the count of voicemails for a specific user
+func (r *VoicemailRepository) CountByUser(ctx context.Context, userID int64) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM voicemails WHERE user_id = ?`, userID).Scan(&count)
 	return count, err
 }
 

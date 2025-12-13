@@ -10,9 +10,10 @@ import (
 // Config holds the runtime configuration for GoSIP
 type Config struct {
 	// Server settings
-	SIPPort  int
-	HTTPPort int
-	DataDir  string
+	SIPPort   int
+	HTTPPort  int
+	DataDir   string
+	SIPDomain string // SIP domain for registrations (e.g., "sip.example.com")
 
 	// Twilio credentials (loaded from database after setup)
 	TwilioAccountSID string
@@ -24,6 +25,7 @@ type Config struct {
 	SMTPUser     string
 	SMTPPassword string
 	SMTPFrom     string
+	SMTPTLS      bool
 
 	// Postmarkapp (alternative to SMTP)
 	PostmarkAPIToken string
@@ -40,9 +42,10 @@ type Config struct {
 // Load creates a Config from environment variables with defaults
 func Load() *Config {
 	cfg := &Config{
-		SIPPort:  getEnvInt("GOSIP_SIP_PORT", DefaultSIPPort),
-		HTTPPort: getEnvInt("GOSIP_HTTP_PORT", DefaultHTTPPort),
-		DataDir:  getEnv("GOSIP_DATA_DIR", DefaultDataDir),
+		SIPPort:   getEnvInt("GOSIP_SIP_PORT", DefaultSIPPort),
+		HTTPPort:  getEnvInt("GOSIP_HTTP_PORT", DefaultHTTPPort),
+		DataDir:   getEnv("GOSIP_DATA_DIR", DefaultDataDir),
+		SIPDomain: getEnv("GOSIP_SIP_DOMAIN", "localhost"),
 
 		// These are typically loaded from database after initial setup
 		TwilioAccountSID: getEnv("TWILIO_ACCOUNT_SID", ""),
@@ -53,6 +56,7 @@ func Load() *Config {
 		SMTPUser:     getEnv("SMTP_USER", ""),
 		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:     getEnv("SMTP_FROM", ""),
+		SMTPTLS:      getEnvBool("SMTP_TLS", false),
 
 		PostmarkAPIToken: getEnv("POSTMARK_API_TOKEN", ""),
 

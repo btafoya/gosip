@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
@@ -44,7 +45,7 @@ func (h *WebhookHandler) VoiceIncoming(w http.ResponseWriter, r *http.Request) {
 	callSID := r.FormValue("CallSid")
 
 	// Check blocklist
-	isBlocked, err := h.deps.DB.Blocklist.IsBlocked(r.Context(), from)
+	isBlocked, _, err := h.deps.DB.Blocklist.IsBlocked(r.Context(), from)
 	if err == nil && isBlocked {
 		h.respondTwiML(w, h.rejectTwiML("blocked"))
 		return
@@ -58,7 +59,7 @@ func (h *WebhookHandler) VoiceIncoming(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get routing rules for this DID
-	routes, err := h.deps.DB.Routes.GetActiveByDID(r.Context(), did.ID)
+	routes, err := h.deps.DB.Routes.GetEnabledByDID(r.Context(), did.ID)
 	if err != nil || len(routes) == 0 {
 		// Default: send to voicemail
 		h.respondTwiML(w, h.voicemailTwiML(did.ID, from))
@@ -90,13 +91,13 @@ func (h *WebhookHandler) VoiceStatus(w http.ResponseWriter, r *http.Request) {
 	duration, _ := strconv.Atoi(r.FormValue("CallDuration"))
 
 	// Update CDR
-	cdr, err := h.deps.DB.CDRs.GetByTwilioSID(r.Context(), callSID)
+	cdr, err := h.deps.DB.CDRs.GetByCallSID(r.Context(), callSID)
 	if err == nil {
-		cdr.Status = status
+		cdr.Disposition = status
 		cdr.Duration = duration
 		if status == "completed" || status == "busy" || status == "no-answer" || status == "failed" {
 			now := time.Now()
-			cdr.EndTime = &now
+			cdr.EndedAt = &now
 		}
 		h.deps.DB.CDRs.Update(r.Context(), cdr)
 	}
@@ -121,14 +122,14 @@ func (h *WebhookHandler) VoicemailRecording(w http.ResponseWriter, r *http.Reque
 
 	// Create voicemail record
 	voicemail := &models.Voicemail{
-		DIDID:              didID,
-		CallerID:           from,
-		Duration:           duration,
-		RecordingURL:       recordingURL + ".mp3",
-		TwilioRecordingSID: recordingSID,
-		IsRead:             false,
-		CreatedAt:          time.Now(),
+		UserID:     &didID,
+		FromNumber: from,
+		Duration:   duration,
+		AudioURL:   recordingURL + ".mp3",
+		IsRead:     false,
+		CreatedAt:  time.Now(),
 	}
+	_ = recordingSID // Used by Twilio for transcription requests
 
 	h.deps.DB.Voicemails.Create(r.Context(), voicemail)
 
@@ -159,9 +160,19 @@ func (h *WebhookHandler) VoicemailTranscription(w http.ResponseWriter, r *http.R
 	voicemailID, _ := strconv.ParseInt(voicemailIDStr, 10, 64)
 
 	// Update voicemail with transcription
-	h.deps.DB.Voicemails.UpdateTranscription(r.Context(), voicemailID, transcriptionText)
+	h.deps.DB.Voicemails.UpdateTranscript(r.Context(), voicemailID, transcriptionText)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// Recording is an alias for VoicemailRecording
+func (h *WebhookHandler) Recording(w http.ResponseWriter, r *http.Request) {
+	h.VoicemailRecording(w, r)
+}
+
+// Transcription is an alias for VoicemailTranscription
+func (h *WebhookHandler) Transcription(w http.ResponseWriter, r *http.Request) {
+	h.VoicemailTranscription(w, r)
 }
 
 // SMSIncoming handles incoming SMS messages
@@ -196,15 +207,17 @@ func (h *WebhookHandler) SMSIncoming(w http.ResponseWriter, r *http.Request) {
 	mediaURLsJSON, _ := json.Marshal(mediaURLs)
 
 	// Create message record
+	didID := did.ID
 	message := &models.Message{
-		DIDID:        did.ID,
-		Direction:    "inbound",
-		RemoteNumber: from,
-		Body:         body,
-		MediaURLs:    mediaURLsJSON,
-		Status:       "received",
-		TwilioSID:    messageSID,
-		CreatedAt:    time.Now(),
+		DIDID:      &didID,
+		Direction:  "inbound",
+		FromNumber: from,
+		ToNumber:   to,
+		Body:       body,
+		MediaURLs:  mediaURLsJSON,
+		Status:     "received",
+		MessageSID: messageSID,
+		CreatedAt:  time.Now(),
 	}
 
 	h.deps.DB.Messages.Create(r.Context(), message)
@@ -232,8 +245,10 @@ func (h *WebhookHandler) SMSStatus(w http.ResponseWriter, r *http.Request) {
 	messageSID := r.FormValue("MessageSid")
 	status := r.FormValue("MessageStatus")
 
-	// Update message status
-	h.deps.DB.Messages.UpdateStatusByTwilioSID(r.Context(), messageSID, status)
+	// Update message status by finding the message first
+	if msg, err := h.deps.DB.Messages.GetByMessageSID(r.Context(), messageSID); err == nil {
+		h.deps.DB.Messages.UpdateStatus(r.Context(), msg.ID, status)
+	}
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -410,8 +425,8 @@ func (h *WebhookHandler) executeAction(route *models.Route, did *models.DID, fro
 	return h.voicemailTwiML(did.ID, from)
 }
 
-func (h *WebhookHandler) checkAutoReply(ctx interface{}, didID int64, body string) string {
-	rules, err := h.deps.DB.AutoReplies.GetActiveByDID(nil, didID)
+func (h *WebhookHandler) checkAutoReply(ctx context.Context, didID int64, body string) string {
+	rules, err := h.deps.DB.AutoReplies.ListEnabledByDID(ctx, didID)
 	if err != nil {
 		return ""
 	}
@@ -423,7 +438,9 @@ func (h *WebhookHandler) checkAutoReply(ctx interface{}, didID int64, body strin
 		case "always":
 			return rule.ReplyText
 		case "keyword":
-			keywords := strings.Split(strings.ToLower(rule.TriggerData), ",")
+			// TriggerData is json.RawMessage, convert to string
+			triggerData := string(rule.TriggerData)
+			keywords := strings.Split(strings.ToLower(triggerData), ",")
 			for _, kw := range keywords {
 				if strings.Contains(bodyLower, strings.TrimSpace(kw)) {
 					return rule.ReplyText
@@ -431,8 +448,8 @@ func (h *WebhookHandler) checkAutoReply(ctx interface{}, didID int64, body strin
 			}
 		case "after_hours":
 			// Check if outside business hours
-			startHour, _ := h.deps.DB.Config.Get(nil, "business_hours_start")
-			endHour, _ := h.deps.DB.Config.Get(nil, "business_hours_end")
+			startHour, _ := h.deps.DB.Config.Get(ctx, "business_hours_start")
+			endHour, _ := h.deps.DB.Config.Get(ctx, "business_hours_end")
 
 			start, _ := strconv.Atoi(startHour)
 			end, _ := strconv.Atoi(endHour)

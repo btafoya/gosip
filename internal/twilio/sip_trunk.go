@@ -210,10 +210,9 @@ func (c *Client) GetSIPDomain(ctx context.Context, domainSID string) (*SIPDomain
 		return nil, fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
-	resp, err := client.Api.FetchSipDomain(accountSID, domainSID)
+	resp, err := client.Api.FetchSipDomain(domainSID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch SIP domain: %w", err)
 	}
@@ -249,7 +248,6 @@ func (c *Client) UpdateSIPDomain(ctx context.Context, domainSID, voiceURL, voice
 		return fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
 	params := &twilioApi.UpdateSipDomainParams{}
@@ -263,7 +261,7 @@ func (c *Client) UpdateSIPDomain(ctx context.Context, domainSID, voiceURL, voice
 		params.SetVoiceStatusCallbackUrl(voiceStatusCallbackURL)
 	}
 
-	_, err := client.Api.UpdateSipDomain(accountSID, domainSID, params)
+	_, err := client.Api.UpdateSipDomain(domainSID, params)
 	if err != nil {
 		return fmt.Errorf("failed to update SIP domain: %w", err)
 	}
@@ -279,10 +277,9 @@ func (c *Client) DeleteSIPDomain(ctx context.Context, domainSID string) error {
 		return fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
-	err := client.Api.DeleteSipDomain(accountSID, domainSID)
+	err := client.Api.DeleteSipDomain(domainSID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete SIP domain: %w", err)
 	}
@@ -298,13 +295,12 @@ func (c *Client) CreateCredentialList(ctx context.Context, friendlyName string) 
 		return "", fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
 	params := &twilioApi.CreateSipCredentialListParams{}
 	params.SetFriendlyName(friendlyName)
 
-	resp, err := client.Api.CreateSipCredentialList(accountSID, params)
+	resp, err := client.Api.CreateSipCredentialList(params)
 	if err != nil {
 		return "", fmt.Errorf("failed to create credential list: %w", err)
 	}
@@ -324,14 +320,13 @@ func (c *Client) AddCredential(ctx context.Context, credentialListSID, username,
 		return fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
 	params := &twilioApi.CreateSipCredentialParams{}
 	params.SetUsername(username)
 	params.SetPassword(password)
 
-	_, err := client.Api.CreateSipCredential(accountSID, credentialListSID, params)
+	_, err := client.Api.CreateSipCredential(credentialListSID, params)
 	if err != nil {
 		return fmt.Errorf("failed to add credential: %w", err)
 	}
@@ -347,13 +342,12 @@ func (c *Client) MapCredentialListToDomain(ctx context.Context, domainSID, crede
 		return fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
 	params := &twilioApi.CreateSipAuthCallsCredentialListMappingParams{}
 	params.SetCredentialListSid(credentialListSID)
 
-	_, err := client.Api.CreateSipAuthCallsCredentialListMapping(accountSID, domainSID, params)
+	_, err := client.Api.CreateSipAuthCallsCredentialListMapping(domainSID, params)
 	if err != nil {
 		return fmt.Errorf("failed to map credential list to domain: %w", err)
 	}

@@ -169,10 +169,9 @@ func (c *Client) GetRecording(recordingSID string) (*Recording, error) {
 		return nil, fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
-	resp, err := client.Api.FetchRecording(accountSID, recordingSID, nil)
+	resp, err := client.Api.FetchRecording(recordingSID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("twilio API error: %w", err)
 	}
@@ -204,10 +203,9 @@ func (c *Client) GetAccountBalance(ctx context.Context) (float64, error) {
 		return 0, fmt.Errorf("twilio client not initialized")
 	}
 	client := c.client
-	accountSID := c.accountSID
 	c.mu.RUnlock()
 
-	resp, err := client.Api.FetchBalance(accountSID, nil)
+	resp, err := client.Api.FetchBalance(nil)
 	if err != nil {
 		return 0, fmt.Errorf("twilio API error: %w", err)
 	}
@@ -233,7 +231,10 @@ func (c *Client) ListPhoneNumbers(ctx context.Context, areaCode string) ([]Avail
 	c.mu.RUnlock()
 
 	params := &twilioApi.ListAvailablePhoneNumberLocalParams{}
-	params.SetAreaCode(areaCode)
+	// Convert area code string to int for the Twilio API
+	var areaCodeInt int
+	fmt.Sscanf(areaCode, "%d", &areaCodeInt)
+	params.SetAreaCode(areaCodeInt)
 	params.SetSmsEnabled(true)
 	params.SetVoiceEnabled(true)
 

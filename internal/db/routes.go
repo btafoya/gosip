@@ -41,16 +41,23 @@ func (r *RouteRepository) Create(ctx context.Context, route *models.Route) error
 // GetByID retrieves a route by ID
 func (r *RouteRepository) GetByID(ctx context.Context, id int64) (*models.Route, error) {
 	route := &models.Route{}
+	var didID sql.NullInt64
+	var conditionData, actionData []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, did_id, priority, name, condition_type, condition_data, action_type, action_data, enabled
 		FROM routes WHERE id = ?
-	`, id).Scan(&route.ID, &route.DIDID, &route.Priority, &route.Name, &route.ConditionType, &route.ConditionData, &route.ActionType, &route.ActionData, &route.Enabled)
+	`, id).Scan(&route.ID, &didID, &route.Priority, &route.Name, &route.ConditionType, &conditionData, &route.ActionType, &actionData, &route.Enabled)
 	if err == sql.ErrNoRows {
 		return nil, ErrRouteNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if didID.Valid {
+		route.DIDID = &didID.Int64
+	}
+	route.ConditionData = conditionData
+	route.ActionData = actionData
 	return route, nil
 }
 
@@ -84,9 +91,16 @@ func (r *RouteRepository) GetByDID(ctx context.Context, didID int64) ([]*models.
 	var routes []*models.Route
 	for rows.Next() {
 		route := &models.Route{}
-		if err := rows.Scan(&route.ID, &route.DIDID, &route.Priority, &route.Name, &route.ConditionType, &route.ConditionData, &route.ActionType, &route.ActionData, &route.Enabled); err != nil {
+		var nullDIDID sql.NullInt64
+		var conditionData, actionData []byte
+		if err := rows.Scan(&route.ID, &nullDIDID, &route.Priority, &route.Name, &route.ConditionType, &conditionData, &route.ActionType, &actionData, &route.Enabled); err != nil {
 			return nil, err
 		}
+		if nullDIDID.Valid {
+			route.DIDID = &nullDIDID.Int64
+		}
+		route.ConditionData = conditionData
+		route.ActionData = actionData
 		routes = append(routes, route)
 	}
 	return routes, rows.Err()
@@ -106,9 +120,16 @@ func (r *RouteRepository) GetEnabledByDID(ctx context.Context, didID int64) ([]*
 	var routes []*models.Route
 	for rows.Next() {
 		route := &models.Route{}
-		if err := rows.Scan(&route.ID, &route.DIDID, &route.Priority, &route.Name, &route.ConditionType, &route.ConditionData, &route.ActionType, &route.ActionData, &route.Enabled); err != nil {
+		var nullDIDID sql.NullInt64
+		var conditionData, actionData []byte
+		if err := rows.Scan(&route.ID, &nullDIDID, &route.Priority, &route.Name, &route.ConditionType, &conditionData, &route.ActionType, &actionData, &route.Enabled); err != nil {
 			return nil, err
 		}
+		if nullDIDID.Valid {
+			route.DIDID = &nullDIDID.Int64
+		}
+		route.ConditionData = conditionData
+		route.ActionData = actionData
 		routes = append(routes, route)
 	}
 	return routes, rows.Err()
@@ -128,9 +149,16 @@ func (r *RouteRepository) List(ctx context.Context) ([]*models.Route, error) {
 	var routes []*models.Route
 	for rows.Next() {
 		route := &models.Route{}
-		if err := rows.Scan(&route.ID, &route.DIDID, &route.Priority, &route.Name, &route.ConditionType, &route.ConditionData, &route.ActionType, &route.ActionData, &route.Enabled); err != nil {
+		var nullDIDID sql.NullInt64
+		var conditionData, actionData []byte
+		if err := rows.Scan(&route.ID, &nullDIDID, &route.Priority, &route.Name, &route.ConditionType, &conditionData, &route.ActionType, &actionData, &route.Enabled); err != nil {
 			return nil, err
 		}
+		if nullDIDID.Valid {
+			route.DIDID = &nullDIDID.Int64
+		}
+		route.ConditionData = conditionData
+		route.ActionData = actionData
 		routes = append(routes, route)
 	}
 	return routes, rows.Err()

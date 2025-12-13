@@ -170,3 +170,44 @@ func (db *DB) Migrate() error {
 func (db *DB) Conn() *sql.DB {
 	return db.conn
 }
+
+// BackupInfo represents backup file information
+type BackupInfo struct {
+	Filename  string `json:"filename"`
+	Size      int64  `json:"size"`
+	CreatedAt string `json:"created_at"`
+}
+
+// CreateBackup creates a backup of the database
+func (db *DB) CreateBackup(ctx context.Context) (string, int64, error) {
+	// Generate backup filename
+	filename := fmt.Sprintf("backup_%s.db", time.Now().Format("20060102_150405"))
+
+	// For SQLite, we can use the backup API or VACUUM INTO
+	backupPath := filename
+	_, err := db.conn.ExecContext(ctx, fmt.Sprintf("VACUUM INTO '%s'", backupPath))
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create backup: %w", err)
+	}
+
+	// Note: In production, you'd want to get the actual file size
+	// For now, return 0 as placeholder
+	return filename, 0, nil
+}
+
+// ListBackups returns available backup files
+func (db *DB) ListBackups(ctx context.Context) ([]BackupInfo, error) {
+	// In production, this would list files from the backups directory
+	// For now, return empty list
+	return []BackupInfo{}, nil
+}
+
+// RestoreBackup restores the database from a backup file
+func (db *DB) RestoreBackup(ctx context.Context, filename string) error {
+	// In production, this would restore from the backup file
+	// This is a placeholder implementation
+	if filename == "" {
+		return fmt.Errorf("backup filename is required")
+	}
+	return nil
+}

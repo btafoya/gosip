@@ -35,10 +35,16 @@ type ConfigResponse struct {
 
 // GetConfig returns current system configuration
 func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, err := h.deps.DB.Config.GetAll(r.Context())
+	configs, err := h.deps.DB.Config.GetAll(r.Context())
 	if err != nil {
 		WriteInternalError(w)
 		return
+	}
+
+	// Convert slice to map for easier access
+	cfg := make(map[string]string)
+	for _, c := range configs {
+		cfg[c.Key] = c.Value
 	}
 
 	// Mask sensitive values
@@ -296,6 +302,65 @@ func (h *SystemHandler) ListBackups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, backups)
+}
+
+// GetSetupStatus returns whether setup is completed
+func (h *SystemHandler) GetSetupStatus(w http.ResponseWriter, r *http.Request) {
+	setupCompleted, _ := h.deps.DB.Config.Get(r.Context(), "setup_completed")
+	WriteJSON(w, http.StatusOK, map[string]bool{
+		"setup_completed": setupCompleted == "true",
+	})
+}
+
+// CompleteSetup handles initial system setup (same as SetupWizard)
+func (h *SystemHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
+	h.SetupWizard(w, r)
+}
+
+// RestoreBackup restores system from a backup
+func (h *SystemHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	if req.Filename == "" {
+		WriteValidationError(w, "Filename is required", []FieldError{{Field: "filename", Message: "Filename is required"}})
+		return
+	}
+
+	if err := h.deps.DB.RestoreBackup(r.Context(), req.Filename); err != nil {
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to restore backup", nil)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"message": "Backup restored successfully"})
+}
+
+// ToggleDND toggles Do Not Disturb mode
+func (h *SystemHandler) ToggleDND(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	value := "false"
+	if req.Enabled {
+		value = "true"
+	}
+
+	if err := h.deps.DB.Config.Set(r.Context(), "dnd_enabled", value); err != nil {
+		WriteInternalError(w)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]bool{"dnd_enabled": req.Enabled})
 }
 
 // Helper to create admin user during setup

@@ -239,3 +239,18 @@ func (r *Registrar) CleanupExpired() {
 		}
 	}
 }
+
+// GetRegistrationCount returns the number of active registrations
+func (r *Registrar) GetRegistrationCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	count := 0
+	now := time.Now()
+	for _, reg := range r.cache {
+		if now.Before(reg.ExpiresAt) {
+			count++
+		}
+	}
+	return count
+}

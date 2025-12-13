@@ -42,32 +42,64 @@ func (r *MessageRepository) Create(ctx context.Context, msg *models.Message) err
 // GetByID retrieves a message by ID
 func (r *MessageRepository) GetByID(ctx context.Context, id int64) (*models.Message, error) {
 	msg := &models.Message{}
+	var didID sql.NullInt64
+	var messageSID, body, status sql.NullString
+	var mediaURLs []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, message_sid, direction, from_number, to_number, did_id, body, media_urls, status, created_at, is_read
 		FROM messages WHERE id = ?
-	`, id).Scan(&msg.ID, &msg.MessageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &msg.DIDID, &msg.Body, &msg.MediaURLs, &msg.Status, &msg.CreatedAt, &msg.IsRead)
+	`, id).Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead)
 	if err == sql.ErrNoRows {
 		return nil, ErrMessageNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if didID.Valid {
+		msg.DIDID = &didID.Int64
+	}
+	if messageSID.Valid {
+		msg.MessageSID = messageSID.String
+	}
+	if body.Valid {
+		msg.Body = body.String
+	}
+	if status.Valid {
+		msg.Status = status.String
+	}
+	msg.MediaURLs = mediaURLs
 	return msg, nil
 }
 
 // GetByMessageSID retrieves a message by Twilio Message SID
-func (r *MessageRepository) GetByMessageSID(ctx context.Context, messageSID string) (*models.Message, error) {
+func (r *MessageRepository) GetByMessageSID(ctx context.Context, msgSID string) (*models.Message, error) {
 	msg := &models.Message{}
+	var didID sql.NullInt64
+	var messageSID, body, status sql.NullString
+	var mediaURLs []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, message_sid, direction, from_number, to_number, did_id, body, media_urls, status, created_at, is_read
 		FROM messages WHERE message_sid = ?
-	`, messageSID).Scan(&msg.ID, &msg.MessageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &msg.DIDID, &msg.Body, &msg.MediaURLs, &msg.Status, &msg.CreatedAt, &msg.IsRead)
+	`, msgSID).Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead)
 	if err == sql.ErrNoRows {
 		return nil, ErrMessageNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if didID.Valid {
+		msg.DIDID = &didID.Int64
+	}
+	if messageSID.Valid {
+		msg.MessageSID = messageSID.String
+	}
+	if body.Valid {
+		msg.Body = body.String
+	}
+	if status.Valid {
+		msg.Status = status.String
+	}
+	msg.MediaURLs = mediaURLs
 	return msg, nil
 }
 
@@ -113,9 +145,25 @@ func (r *MessageRepository) List(ctx context.Context, limit, offset int) ([]*mod
 	var msgs []*models.Message
 	for rows.Next() {
 		msg := &models.Message{}
-		if err := rows.Scan(&msg.ID, &msg.MessageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &msg.DIDID, &msg.Body, &msg.MediaURLs, &msg.Status, &msg.CreatedAt, &msg.IsRead); err != nil {
+		var didID sql.NullInt64
+		var messageSID, body, status sql.NullString
+		var mediaURLs []byte
+		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
+		if didID.Valid {
+			msg.DIDID = &didID.Int64
+		}
+		if messageSID.Valid {
+			msg.MessageSID = messageSID.String
+		}
+		if body.Valid {
+			msg.Body = body.String
+		}
+		if status.Valid {
+			msg.Status = status.String
+		}
+		msg.MediaURLs = mediaURLs
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
@@ -135,9 +183,25 @@ func (r *MessageRepository) ListByDID(ctx context.Context, didID int64, limit, o
 	var msgs []*models.Message
 	for rows.Next() {
 		msg := &models.Message{}
-		if err := rows.Scan(&msg.ID, &msg.MessageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &msg.DIDID, &msg.Body, &msg.MediaURLs, &msg.Status, &msg.CreatedAt, &msg.IsRead); err != nil {
+		var nullDIDID sql.NullInt64
+		var messageSID, body, status sql.NullString
+		var mediaURLs []byte
+		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &nullDIDID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
+		if nullDIDID.Valid {
+			msg.DIDID = &nullDIDID.Int64
+		}
+		if messageSID.Valid {
+			msg.MessageSID = messageSID.String
+		}
+		if body.Valid {
+			msg.Body = body.String
+		}
+		if status.Valid {
+			msg.Status = status.String
+		}
+		msg.MediaURLs = mediaURLs
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
@@ -159,9 +223,25 @@ func (r *MessageRepository) GetConversation(ctx context.Context, didID int64, ph
 	var msgs []*models.Message
 	for rows.Next() {
 		msg := &models.Message{}
-		if err := rows.Scan(&msg.ID, &msg.MessageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &msg.DIDID, &msg.Body, &msg.MediaURLs, &msg.Status, &msg.CreatedAt, &msg.IsRead); err != nil {
+		var nullDIDID sql.NullInt64
+		var messageSID, body, status sql.NullString
+		var mediaURLs []byte
+		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &nullDIDID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
+		if nullDIDID.Valid {
+			msg.DIDID = &nullDIDID.Int64
+		}
+		if messageSID.Valid {
+			msg.MessageSID = messageSID.String
+		}
+		if body.Valid {
+			msg.Body = body.String
+		}
+		if status.Valid {
+			msg.Status = status.String
+		}
+		msg.MediaURLs = mediaURLs
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
@@ -181,9 +261,25 @@ func (r *MessageRepository) ListUnread(ctx context.Context) ([]*models.Message, 
 	var msgs []*models.Message
 	for rows.Next() {
 		msg := &models.Message{}
-		if err := rows.Scan(&msg.ID, &msg.MessageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &msg.DIDID, &msg.Body, &msg.MediaURLs, &msg.Status, &msg.CreatedAt, &msg.IsRead); err != nil {
+		var didID sql.NullInt64
+		var messageSID, body, status sql.NullString
+		var mediaURLs []byte
+		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
+		if didID.Valid {
+			msg.DIDID = &didID.Int64
+		}
+		if messageSID.Valid {
+			msg.MessageSID = messageSID.String
+		}
+		if body.Valid {
+			msg.Body = body.String
+		}
+		if status.Valid {
+			msg.Status = status.String
+		}
+		msg.MediaURLs = mediaURLs
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
@@ -201,6 +297,103 @@ func (r *MessageRepository) Count(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`).Scan(&count)
 	return count, err
+}
+
+// CountByDID returns the count of messages for a specific DID
+func (r *MessageRepository) CountByDID(ctx context.Context, didID int64) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE did_id = ?`, didID).Scan(&count)
+	return count, err
+}
+
+// CountByDirection returns the count of messages with a specific direction
+func (r *MessageRepository) CountByDirection(ctx context.Context, direction string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE direction = ?`, direction).Scan(&count)
+	return count, err
+}
+
+// CountByRemoteNumber returns the count of messages with a specific remote number
+func (r *MessageRepository) CountByRemoteNumber(ctx context.Context, remoteNumber string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE from_number = ? OR to_number = ?`, remoteNumber, remoteNumber).Scan(&count)
+	return count, err
+}
+
+// ListByDirection returns messages with a specific direction with pagination
+func (r *MessageRepository) ListByDirection(ctx context.Context, direction string, limit, offset int) ([]*models.Message, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, message_sid, direction, from_number, to_number, did_id, body, media_urls, status, created_at, is_read
+		FROM messages WHERE direction = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`, direction, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []*models.Message
+	for rows.Next() {
+		msg := &models.Message{}
+		var didID sql.NullInt64
+		var messageSID, body, status sql.NullString
+		var mediaURLs []byte
+		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
+			return nil, err
+		}
+		if didID.Valid {
+			msg.DIDID = &didID.Int64
+		}
+		if messageSID.Valid {
+			msg.MessageSID = messageSID.String
+		}
+		if body.Valid {
+			msg.Body = body.String
+		}
+		if status.Valid {
+			msg.Status = status.String
+		}
+		msg.MediaURLs = mediaURLs
+		msgs = append(msgs, msg)
+	}
+	return msgs, rows.Err()
+}
+
+// ListByRemoteNumber returns messages with a specific remote number with pagination
+func (r *MessageRepository) ListByRemoteNumber(ctx context.Context, remoteNumber string, limit, offset int) ([]*models.Message, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, message_sid, direction, from_number, to_number, did_id, body, media_urls, status, created_at, is_read
+		FROM messages WHERE from_number = ? OR to_number = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`, remoteNumber, remoteNumber, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []*models.Message
+	for rows.Next() {
+		msg := &models.Message{}
+		var didID sql.NullInt64
+		var messageSID, body, status sql.NullString
+		var mediaURLs []byte
+		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
+			return nil, err
+		}
+		if didID.Valid {
+			msg.DIDID = &didID.Int64
+		}
+		if messageSID.Valid {
+			msg.MessageSID = messageSID.String
+		}
+		if body.Valid {
+			msg.Body = body.String
+		}
+		if status.Valid {
+			msg.Status = status.String
+		}
+		msg.MediaURLs = mediaURLs
+		msgs = append(msgs, msg)
+	}
+	return msgs, rows.Err()
 }
 
 // GetConversationSummaries returns a summary of conversations (latest message per conversation)
@@ -224,10 +417,18 @@ func (r *MessageRepository) GetConversationSummaries(ctx context.Context, didID 
 	var summaries []map[string]interface{}
 	for rows.Next() {
 		var phoneNumber string
-		var lastMessageAt time.Time
+		var lastMessageAtStr string
 		var messageCount, unreadCount int
-		if err := rows.Scan(&phoneNumber, &lastMessageAt, &messageCount, &unreadCount); err != nil {
+		if err := rows.Scan(&phoneNumber, &lastMessageAtStr, &messageCount, &unreadCount); err != nil {
 			return nil, err
+		}
+		// Parse the timestamp string from SQLite
+		lastMessageAt, _ := time.Parse("2006-01-02 15:04:05-07:00", lastMessageAtStr)
+		if lastMessageAt.IsZero() {
+			lastMessageAt, _ = time.Parse("2006-01-02T15:04:05Z", lastMessageAtStr)
+		}
+		if lastMessageAt.IsZero() {
+			lastMessageAt, _ = time.Parse(time.RFC3339, lastMessageAtStr)
 		}
 		summaries = append(summaries, map[string]interface{}{
 			"phone_number":    phoneNumber,

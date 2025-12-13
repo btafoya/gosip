@@ -10,7 +10,6 @@ import (
 
 	"github.com/btafoya/gosip/internal/db"
 	"github.com/emiago/sipgo"
-	"github.com/emiago/sipgo/sip"
 )
 
 // Config holds SIP server configuration
@@ -29,9 +28,10 @@ type Server struct {
 	registrar *Registrar
 	auth      *Authenticator
 
-	mu        sync.RWMutex
-	running   bool
-	cancelFn  context.CancelFunc
+	mu          sync.RWMutex
+	running     bool
+	cancelFn    context.CancelFunc
+	activeCalls int // Track number of active calls
 }
 
 // NewServer creates a new SIP server
@@ -167,4 +167,27 @@ func (s *Server) IsRunning() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.running
+}
+
+// GetActiveCallCount returns the number of currently active calls
+func (s *Server) GetActiveCallCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeCalls
+}
+
+// incrementCallCount increases the active call count
+func (s *Server) incrementCallCount() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeCalls++
+}
+
+// decrementCallCount decreases the active call count
+func (s *Server) decrementCallCount() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeCalls > 0 {
+		s.activeCalls--
+	}
 }

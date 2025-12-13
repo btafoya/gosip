@@ -60,7 +60,7 @@ type ForwardAction struct {
 // Evaluate evaluates all rules for the given call context and returns the action
 func (e *Engine) Evaluate(ctx context.Context, callCtx *CallContext) (*Action, error) {
 	// Check blocklist first
-	isBlocked, err := e.database.Blocklist.IsBlocked(ctx, callCtx.CallerID)
+	isBlocked, _, err := e.database.Blocklist.IsBlocked(ctx, callCtx.CallerID)
 	if err == nil && isBlocked {
 		return &Action{
 			Type:      "reject",
@@ -69,15 +69,19 @@ func (e *Engine) Evaluate(ctx context.Context, callCtx *CallContext) (*Action, e
 	}
 
 	// Get active routes for this DID, ordered by priority
-	routes, err := e.database.Routes.GetActiveByDID(ctx, callCtx.DIDID)
+	routes, err := e.database.Routes.GetEnabledByDID(ctx, callCtx.DIDID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Also get global routes (no DID specified)
-	globalRoutes, err := e.database.Routes.GetGlobalActive(ctx)
+	// Also get global routes (no DID specified) - get all and filter
+	allRoutes, err := e.database.Routes.List(ctx)
 	if err == nil {
-		routes = append(routes, globalRoutes...)
+		for _, route := range allRoutes {
+			if route.DIDID == nil && route.Enabled {
+				routes = append(routes, route)
+			}
+		}
 	}
 
 	// Sort by priority (lower number = higher priority)

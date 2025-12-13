@@ -50,27 +50,46 @@ func (h *MessageHandler) List(w http.ResponseWriter, r *http.Request) {
 		limit = config.MaxPageSize
 	}
 
-	filter := db.MessageFilter{
-		Direction:    direction,
-		RemoteNumber: remoteNumber,
-		Limit:        limit,
-		Offset:       offset,
-	}
+	var messages []*models.Message
+	var total int
+	var err error
 
-	if didIDStr != "" {
-		didID, err := strconv.ParseInt(didIDStr, 10, 64)
+	// Apply filters in order of specificity
+	switch {
+	case didIDStr != "":
+		didID, parseErr := strconv.ParseInt(didIDStr, 10, 64)
+		if parseErr == nil {
+			messages, err = h.deps.DB.Messages.ListByDID(r.Context(), didID, limit, offset)
+			if err == nil {
+				total, _ = h.deps.DB.Messages.CountByDID(r.Context(), didID)
+			}
+		} else {
+			messages, err = h.deps.DB.Messages.List(r.Context(), limit, offset)
+			if err == nil {
+				total, _ = h.deps.DB.Messages.Count(r.Context())
+			}
+		}
+	case direction != "":
+		messages, err = h.deps.DB.Messages.ListByDirection(r.Context(), direction, limit, offset)
 		if err == nil {
-			filter.DIDID = &didID
+			total, _ = h.deps.DB.Messages.CountByDirection(r.Context(), direction)
+		}
+	case remoteNumber != "":
+		messages, err = h.deps.DB.Messages.ListByRemoteNumber(r.Context(), remoteNumber, limit, offset)
+		if err == nil {
+			total, _ = h.deps.DB.Messages.CountByRemoteNumber(r.Context(), remoteNumber)
+		}
+	default:
+		messages, err = h.deps.DB.Messages.List(r.Context(), limit, offset)
+		if err == nil {
+			total, _ = h.deps.DB.Messages.Count(r.Context())
 		}
 	}
 
-	messages, err := h.deps.DB.Messages.List(r.Context(), filter)
 	if err != nil {
 		WriteInternalError(w)
 		return
 	}
-
-	total, _ := h.deps.DB.Messages.Count(r.Context(), filter)
 
 	var response []*MessageResponse
 	for _, m := range messages {
@@ -136,14 +155,16 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create message record
+	didID := req.DIDID
 	message := &models.Message{
-		DIDID:        req.DIDID,
-		Direction:    "outbound",
-		RemoteNumber: req.ToNumber,
-		Body:         req.Body,
-		MediaURLs:    mediaURLsJSON,
-		Status:       "queued",
-		CreatedAt:    time.Now(),
+		DIDID:      &didID,
+		Direction:  "outbound",
+		FromNumber: did.Number,
+		ToNumber:   req.ToNumber,
+		Body:       req.Body,
+		MediaURLs:  mediaURLsJSON,
+		Status:     "queued",
+		CreatedAt:  time.Now(),
 	}
 
 	if err := h.deps.DB.Messages.Create(r.Context(), message); err != nil {
@@ -158,8 +179,9 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 			if sendErr != nil {
 				h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "failed")
 			} else {
-				h.deps.DB.Messages.UpdateTwilioSID(r.Context(), message.ID, twilioSID)
-				h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "sent")
+				message.MessageSID = twilioSID
+				message.Status = "sent"
+				h.deps.DB.Messages.Update(r.Context(), message)
 			}
 		}
 	}()
@@ -212,6 +234,18 @@ func (h *MessageHandler) GetConversation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	didIDStr := r.URL.Query().Get("did_id")
+	if didIDStr == "" {
+		WriteValidationError(w, "did_id query parameter is required", nil)
+		return
+	}
+
+	didID, err := strconv.ParseInt(didIDStr, 10, 64)
+	if err != nil {
+		WriteValidationError(w, "Invalid did_id", nil)
+		return
+	}
+
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
@@ -222,7 +256,7 @@ func (h *MessageHandler) GetConversation(w http.ResponseWriter, r *http.Request)
 		limit = 100
 	}
 
-	messages, err := h.deps.DB.Messages.GetByRemoteNumber(r.Context(), remoteNumber, limit, offset)
+	messages, err := h.deps.DB.Messages.GetConversation(r.Context(), didID, remoteNumber, limit, offset)
 	if err != nil {
 		WriteInternalError(w)
 		return
@@ -234,6 +268,45 @@ func (h *MessageHandler) GetConversation(w http.ResponseWriter, r *http.Request)
 	}
 
 	WriteJSON(w, http.StatusOK, response)
+}
+
+// GetConversations returns a list of conversation summaries
+func (h *MessageHandler) GetConversations(w http.ResponseWriter, r *http.Request) {
+	didIDStr := r.URL.Query().Get("did_id")
+	if didIDStr == "" {
+		WriteValidationError(w, "did_id query parameter is required", nil)
+		return
+	}
+
+	didID, err := strconv.ParseInt(didIDStr, 10, 64)
+	if err != nil {
+		WriteValidationError(w, "Invalid did_id", nil)
+		return
+	}
+
+	conversations, err := h.deps.DB.Messages.GetConversationSummaries(r.Context(), didID)
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, conversations)
+}
+
+// MarkAsRead marks a message as read
+func (h *MessageHandler) MarkAsRead(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		WriteValidationError(w, "Invalid message ID", nil)
+		return
+	}
+
+	if err := h.deps.DB.Messages.MarkAsRead(r.Context(), id); err != nil {
+		WriteInternalError(w)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"message": "Message marked as read"})
 }
 
 // Auto-reply endpoints
@@ -258,14 +331,7 @@ func (h *MessageHandler) ListAutoReplies(w http.ResponseWriter, r *http.Request)
 
 	var response []*AutoReplyResponse
 	for _, rule := range rules {
-		response = append(response, &AutoReplyResponse{
-			ID:          rule.ID,
-			DIDID:       rule.DIDID,
-			TriggerType: rule.TriggerType,
-			TriggerData: rule.TriggerData,
-			ReplyText:   rule.ReplyText,
-			Enabled:     rule.Enabled,
-		})
+		response = append(response, toAutoReplyResponse(rule))
 	}
 
 	WriteJSON(w, http.StatusOK, response)
@@ -308,7 +374,7 @@ func (h *MessageHandler) CreateAutoReply(w http.ResponseWriter, r *http.Request)
 	rule := &models.AutoReply{
 		DIDID:       req.DIDID,
 		TriggerType: req.TriggerType,
-		TriggerData: req.TriggerData,
+		TriggerData: json.RawMessage(req.TriggerData),
 		ReplyText:   req.ReplyText,
 		Enabled:     req.Enabled,
 	}
@@ -318,14 +384,7 @@ func (h *MessageHandler) CreateAutoReply(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, &AutoReplyResponse{
-		ID:          rule.ID,
-		DIDID:       rule.DIDID,
-		TriggerType: rule.TriggerType,
-		TriggerData: rule.TriggerData,
-		ReplyText:   rule.ReplyText,
-		Enabled:     rule.Enabled,
-	})
+	WriteJSON(w, http.StatusCreated, toAutoReplyResponse(rule))
 }
 
 // UpdateAutoReply updates an auto-reply rule
@@ -356,7 +415,7 @@ func (h *MessageHandler) UpdateAutoReply(w http.ResponseWriter, r *http.Request)
 		rule.TriggerType = req.TriggerType
 	}
 	if req.TriggerData != "" {
-		rule.TriggerData = req.TriggerData
+		rule.TriggerData = json.RawMessage(req.TriggerData)
 	}
 	if req.ReplyText != "" {
 		rule.ReplyText = req.ReplyText
@@ -369,14 +428,7 @@ func (h *MessageHandler) UpdateAutoReply(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, &AutoReplyResponse{
-		ID:          rule.ID,
-		DIDID:       rule.DIDID,
-		TriggerType: rule.TriggerType,
-		TriggerData: rule.TriggerData,
-		ReplyText:   rule.ReplyText,
-		Enabled:     rule.Enabled,
-	})
+	WriteJSON(w, http.StatusOK, toAutoReplyResponse(rule))
 }
 
 // DeleteAutoReply removes an auto-reply rule
@@ -401,15 +453,41 @@ func toMessageResponse(m *models.Message) *MessageResponse {
 		json.Unmarshal(m.MediaURLs, &mediaURLs)
 	}
 
+	var didID int64
+	if m.DIDID != nil {
+		didID = *m.DIDID
+	}
+
+	// Determine remote number based on direction
+	remoteNumber := m.ToNumber
+	if m.Direction == "inbound" {
+		remoteNumber = m.FromNumber
+	}
+
 	return &MessageResponse{
 		ID:           m.ID,
-		DIDID:        m.DIDID,
+		DIDID:        didID,
 		Direction:    m.Direction,
-		RemoteNumber: m.RemoteNumber,
+		RemoteNumber: remoteNumber,
 		Body:         m.Body,
 		MediaURLs:    mediaURLs,
 		Status:       m.Status,
-		TwilioSID:    m.TwilioSID,
+		TwilioSID:    m.MessageSID,
 		CreatedAt:    m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+func toAutoReplyResponse(rule *models.AutoReply) *AutoReplyResponse {
+	triggerData := ""
+	if len(rule.TriggerData) > 0 {
+		triggerData = string(rule.TriggerData)
+	}
+	return &AutoReplyResponse{
+		ID:          rule.ID,
+		DIDID:       rule.DIDID,
+		TriggerType: rule.TriggerType,
+		TriggerData: triggerData,
+		ReplyText:   rule.ReplyText,
+		Enabled:     rule.Enabled,
 	}
 }
