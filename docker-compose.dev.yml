@@ -1,0 +1,57 @@
+version: '3.8'
+
+# Development docker-compose with hot reloading
+services:
+  gosip-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: gosip-backend-dev
+    ports:
+      - "8080:8080"       # HTTP API
+      - "5060:5060/udp"   # SIP UDP
+      - "5060:5060/tcp"   # SIP TCP
+    volumes:
+      - .:/app
+      - go-modules:/go/pkg/mod
+      - gosip-data:/app/data
+    environment:
+      - GOSIP_DATA_DIR=/app/data
+      - GOSIP_DB_PATH=/app/data/gosip.db
+      - GOSIP_HTTP_PORT=8080
+      - GOSIP_SIP_PORT=5060
+      - GOSIP_LOG_LEVEL=debug
+      - GOSIP_DEV_MODE=true
+      - TZ=${TZ:-America/New_York}
+    networks:
+      - gosip-net
+    command: go run ./cmd/gosip
+
+  gosip-frontend:
+    image: node:20-alpine
+    container_name: gosip-frontend-dev
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    networks:
+      - gosip-net
+    command: sh -c "corepack enable && pnpm install && pnpm dev --host"
+    depends_on:
+      - gosip-backend
+
+volumes:
+  gosip-data:
+    driver: local
+  go-modules:
+    driver: local
+  frontend-node-modules:
+    driver: local
+
+networks:
+  gosip-net:
+    driver: bridge

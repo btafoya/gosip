@@ -1,0 +1,48 @@
+# Air configuration for hot reloading during development
+root = "."
+tmp_dir = "tmp"
+
+[build]
+# Binary name
+bin = "./tmp/main"
+# Build command
+cmd = "go build -o ./tmp/main ./cmd/gosip"
+# Watch directories
+include_dir = ["cmd", "internal", "pkg"]
+# Watch file extensions
+include_ext = ["go", "tpl", "tmpl", "html"]
+# Exclude directories
+exclude_dir = ["tmp", "vendor", "frontend", "data", "node_modules"]
+# Exclude files
+exclude_file = []
+# Exclude specific regular expressions
+exclude_regex = ["_test.go"]
+# Exclude unchanged files
+exclude_unchanged = true
+# Follow symlinks
+follow_symlink = false
+# Build delay after file changes
+delay = 1000
+# Stop running old binary when build errors occur
+stop_on_error = true
+# Send interrupt signal before killing process
+send_interrupt = true
+# Kill delay
+kill_delay = 500
+
+[log]
+# Show build logs
+time = true
+# Main log only shows errors
+main_only = false
+
+[color]
+# Customize colors
+main = "yellow"
+watcher = "cyan"
+build = "green"
+runner = "magenta"
+
+[misc]
+# Delete tmp directory on exit
+clean_on_exit = true

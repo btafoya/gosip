@@ -58,3 +58,21 @@ Thumbs.db
 # Build artifacts
 /dist/
 /build/
+bin/
+tmp/
+
+# Air hot reload
+tmp/
+
+# Coverage
+coverage.html
+coverage.out
+
+# Secrets
+*.pem
+*.key
+secrets/
+
+# Local config
+config.local.yaml
+config.local.json
