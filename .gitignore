@@ -1,0 +1,60 @@
+# Claude Code configuration (private)
+.claude/
+CLAUDE.md
+.mcp.json
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# Binaries
+/gosip
+/cmd/gosip/gosip
+
+# Data directory (runtime)
+/data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Recordings and media
+/recordings/
+/voicemails/
+/backups/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+/dist/
+/build/
