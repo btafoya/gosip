@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
+
 	"github.com/btafoya/gosip/internal/config"
 	"github.com/btafoya/gosip/internal/db"
 	"github.com/btafoya/gosip/internal/models"
+	"github.com/btafoya/gosip/internal/twilio"
 	"github.com/btafoya/gosip/pkg/sip"
 )
 
@@ -22,6 +25,7 @@ type TwilioClient interface {
 	UpdateCredentials(accountSID, authToken string)
 	IsHealthy() bool
 	RequestTranscription(recordingSID string, voicemailID int64) error
+	ListIncomingPhoneNumbers(ctx context.Context) ([]twilio.IncomingPhoneNumber, error)
 }
 
 // Notifier interface for sending notifications

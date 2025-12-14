@@ -298,4 +298,3 @@ const sortedMessages = computed(() => {
     </div>
   </div>
 </template>
-</script>

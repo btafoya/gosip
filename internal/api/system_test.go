@@ -37,9 +37,9 @@ func TestSystemHandler_GetConfig(t *testing.T) {
 	if !resp.VoicemailEnabled {
 		t.Error("Expected VoicemailEnabled to be true")
 	}
-	// TwilioAccountSID should be masked
-	if resp.TwilioAccountSID != "AC123456..." {
-		t.Errorf("Expected masked Twilio SID 'AC123456...', got %s", resp.TwilioAccountSID)
+	// TwilioAccountSID should be returned (admin-only endpoint)
+	if resp.TwilioAccountSID != "AC123456789" {
+		t.Errorf("Expected Twilio SID 'AC123456789', got %s", resp.TwilioAccountSID)
 	}
 }
 
@@ -71,8 +71,8 @@ func TestSystemHandler_UpdateConfig(t *testing.T) {
 	handler := NewSystemHandler(deps)
 
 	reqBody := UpdateConfigRequest{
-		Key:   "voicemail_enabled",
-		Value: "true",
+		VoicemailGreeting: "Hello, please leave a message",
+		Timezone:          "America/Los_Angeles",
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -84,35 +84,69 @@ func TestSystemHandler_UpdateConfig(t *testing.T) {
 
 	assertStatus(t, rr, http.StatusOK)
 
-	// Verify the value was set
-	value, _ := setup.DB.Config.Get(context.Background(), "voicemail_enabled")
-	if value != "true" {
-		t.Errorf("Expected voicemail_enabled to be 'true', got %s", value)
+	// Verify the values were set
+	greeting, _ := setup.DB.Config.Get(context.Background(), "voicemail_greeting")
+	if greeting != "Hello, please leave a message" {
+		t.Errorf("Expected voicemail_greeting to be 'Hello, please leave a message', got %s", greeting)
+	}
+	timezone, _ := setup.DB.Config.Get(context.Background(), "timezone")
+	if timezone != "America/Los_Angeles" {
+		t.Errorf("Expected timezone to be 'America/Los_Angeles', got %s", timezone)
 	}
 }
 
-func TestSystemHandler_UpdateConfig_AllowedKeys(t *testing.T) {
+func TestSystemHandler_UpdateConfig_AllFields(t *testing.T) {
 	setup := setupTestAPI(t)
-	deps := &Dependencies{DB: setup.DB}
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
 	handler := NewSystemHandler(deps)
 
-	allowedKeys := []string{
-		"voicemail_enabled",
-		"recording_enabled",
-		"transcription_enabled",
-		"voicemail_greeting",
-		"business_hours_start",
-		"business_hours_end",
-		"timezone",
+	tests := []struct {
+		name     string
+		reqBody  UpdateConfigRequest
+		checkKey string
+		expected string
+	}{
+		{
+			name:     "Update Twilio Account SID",
+			reqBody:  UpdateConfigRequest{TwilioAccountSID: "AC123456789"},
+			checkKey: "twilio_account_sid",
+			expected: "AC123456789",
+		},
+		{
+			name:     "Update SMTP Host",
+			reqBody:  UpdateConfigRequest{SMTPHost: "smtp.example.com"},
+			checkKey: "smtp_host",
+			expected: "smtp.example.com",
+		},
+		{
+			name:     "Update SMTP Port",
+			reqBody:  UpdateConfigRequest{SMTPPort: 465},
+			checkKey: "smtp_port",
+			expected: "465",
+		},
+		{
+			name:     "Update Gotify URL",
+			reqBody:  UpdateConfigRequest{GotifyURL: "https://gotify.example.com"},
+			checkKey: "gotify_url",
+			expected: "https://gotify.example.com",
+		},
+		{
+			name:     "Update Voicemail Greeting",
+			reqBody:  UpdateConfigRequest{VoicemailGreeting: "Custom greeting"},
+			checkKey: "voicemail_greeting",
+			expected: "Custom greeting",
+		},
+		{
+			name:     "Update Timezone",
+			reqBody:  UpdateConfigRequest{Timezone: "Europe/London"},
+			checkKey: "timezone",
+			expected: "Europe/London",
+		},
 	}
 
-	for _, key := range allowedKeys {
-		t.Run(key, func(t *testing.T) {
-			reqBody := UpdateConfigRequest{
-				Key:   key,
-				Value: "test_value",
-			}
-			body, _ := json.Marshal(reqBody)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.reqBody)
 
 			req := httptest.NewRequest(http.MethodPut, "/api/system/config", bytes.NewBuffer(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -121,19 +155,23 @@ func TestSystemHandler_UpdateConfig_AllowedKeys(t *testing.T) {
 			handler.UpdateConfig(rr, req)
 
 			assertStatus(t, rr, http.StatusOK)
+
+			// Verify the value was set
+			value, _ := setup.DB.Config.Get(context.Background(), tt.checkKey)
+			if value != tt.expected {
+				t.Errorf("Expected %s to be '%s', got '%s'", tt.checkKey, tt.expected, value)
+			}
 		})
 	}
 }
 
-func TestSystemHandler_UpdateConfig_DisallowedKey(t *testing.T) {
+func TestSystemHandler_UpdateConfig_EmptyRequest(t *testing.T) {
 	setup := setupTestAPI(t)
 	deps := &Dependencies{DB: setup.DB}
 	handler := NewSystemHandler(deps)
 
-	reqBody := UpdateConfigRequest{
-		Key:   "twilio_auth_token",
-		Value: "some_token",
-	}
+	// Empty request should succeed but not change anything
+	reqBody := UpdateConfigRequest{}
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest(http.MethodPut, "/api/system/config", bytes.NewBuffer(body))
@@ -142,8 +180,7 @@ func TestSystemHandler_UpdateConfig_DisallowedKey(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.UpdateConfig(rr, req)
 
-	assertStatus(t, rr, http.StatusBadRequest)
-	assertErrorCode(t, rr, ErrCodeValidation)
+	assertStatus(t, rr, http.StatusOK)
 }
 
 func TestSystemHandler_UpdateConfig_InvalidJSON(t *testing.T) {
@@ -437,18 +474,19 @@ func TestNewSystemHandler(t *testing.T) {
 	}
 }
 
-func TestSystemHandler_GetConfig_MaskedSID(t *testing.T) {
+func TestSystemHandler_GetConfig_FullSID(t *testing.T) {
 	setup := setupTestAPI(t)
 	deps := &Dependencies{DB: setup.DB}
 	handler := NewSystemHandler(deps)
 
+	// Admin-only endpoint should return full SIDs
 	tests := []struct {
 		sid      string
 		expected string
 	}{
-		{"AC12345678901234567890", "AC123456..."},
-		{"AC1234567", "AC123456..."},
-		{"short", ""}, // Too short to mask
+		{"AC12345678901234567890", "AC12345678901234567890"},
+		{"AC1234567", "AC1234567"},
+		{"short", "short"},
 	}
 
 	for _, tt := range tests {
@@ -465,7 +503,7 @@ func TestSystemHandler_GetConfig_MaskedSID(t *testing.T) {
 			decodeResponse(t, rr, &resp)
 
 			if resp.TwilioAccountSID != tt.expected {
-				t.Errorf("Expected masked SID '%s', got '%s'", tt.expected, resp.TwilioAccountSID)
+				t.Errorf("Expected SID '%s', got '%s'", tt.expected, resp.TwilioAccountSID)
 			}
 		})
 	}

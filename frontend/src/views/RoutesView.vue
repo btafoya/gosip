@@ -526,4 +526,3 @@ function getActionDescription(route: RouteRule): string {
     </div>
   </div>
 </template>
-</script>

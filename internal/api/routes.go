@@ -61,7 +61,7 @@ func (h *RouteHandler) List(w http.ResponseWriter, r *http.Request) {
 		response = append(response, toRouteResponse(r))
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	WriteJSON(w, http.StatusOK, map[string]interface{}{"data": response})
 }
 
 // CreateRouteRequest represents a route creation request
@@ -239,7 +239,7 @@ func (h *RouteHandler) ListBlocklist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, entries)
+	WriteJSON(w, http.StatusOK, map[string]interface{}{"data": entries})
 }
 
 // AddBlocklistRequest represents a blocklist addition request

@@ -273,4 +273,3 @@ function formatPhoneNumber(phone: string): string {
     </div>
   </div>
 </template>
-</script>

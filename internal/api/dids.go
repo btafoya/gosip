@@ -20,14 +20,20 @@ func NewDIDHandler(deps *Dependencies) *DIDHandler {
 	return &DIDHandler{deps: deps}
 }
 
+// DIDCapabilities represents the capabilities of a DID
+type DIDCapabilities struct {
+	Voice bool `json:"voice"`
+	SMS   bool `json:"sms"`
+	MMS   bool `json:"mms"`
+}
+
 // DIDResponse represents a DID in API responses
 type DIDResponse struct {
-	ID           int64  `json:"id"`
-	Number       string `json:"number"`
-	TwilioSID    string `json:"twilio_sid,omitempty"`
-	Name         string `json:"name,omitempty"`
-	SMSEnabled   bool   `json:"sms_enabled"`
-	VoiceEnabled bool   `json:"voice_enabled"`
+	ID           int64           `json:"id"`
+	PhoneNumber  string          `json:"phone_number"`
+	FriendlyName string          `json:"friendly_name,omitempty"`
+	TwilioSID    string          `json:"twilio_sid,omitempty"`
+	Capabilities DIDCapabilities `json:"capabilities"`
 }
 
 // List returns all DIDs
@@ -43,7 +49,7 @@ func (h *DIDHandler) List(w http.ResponseWriter, r *http.Request) {
 		response = append(response, toDIDResponse(d))
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	WriteJSON(w, http.StatusOK, map[string]interface{}{"data": response})
 }
 
 // CreateDIDRequest represents a DID creation request
@@ -110,9 +116,9 @@ func (h *DIDHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // UpdateDIDRequest represents a DID update request
 type UpdateDIDRequest struct {
-	Number       string `json:"number,omitempty"`
+	PhoneNumber  string `json:"phone_number,omitempty"`
 	TwilioSID    string `json:"twilio_sid,omitempty"`
-	Name         string `json:"name,omitempty"`
+	FriendlyName string `json:"friendly_name,omitempty"`
 	SMSEnabled   *bool  `json:"sms_enabled,omitempty"`
 	VoiceEnabled *bool  `json:"voice_enabled,omitempty"`
 }
@@ -141,14 +147,14 @@ func (h *DIDHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Number != "" {
-		did.Number = req.Number
+	if req.PhoneNumber != "" {
+		did.Number = req.PhoneNumber
 	}
 	if req.TwilioSID != "" {
 		did.TwilioSID = req.TwilioSID
 	}
-	if req.Name != "" {
-		did.Name = req.Name
+	if req.FriendlyName != "" {
+		did.Name = req.FriendlyName
 	}
 	if req.SMSEnabled != nil {
 		did.SMSEnabled = *req.SMSEnabled
@@ -184,10 +190,84 @@ func (h *DIDHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func toDIDResponse(did *models.DID) *DIDResponse {
 	return &DIDResponse{
 		ID:           did.ID,
-		Number:       did.Number,
+		PhoneNumber:  did.Number,
+		FriendlyName: did.Name,
 		TwilioSID:    did.TwilioSID,
-		Name:         did.Name,
-		SMSEnabled:   did.SMSEnabled,
-		VoiceEnabled: did.VoiceEnabled,
+		Capabilities: DIDCapabilities{
+			Voice: did.VoiceEnabled,
+			SMS:   did.SMSEnabled,
+			MMS:   did.SMSEnabled, // MMS typically follows SMS capability
+		},
 	}
+}
+
+// SyncFromTwilio syncs DIDs from Twilio account
+func (h *DIDHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) {
+	// Check if Twilio client is available
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, "TWILIO_NOT_CONFIGURED", "Twilio is not configured", nil)
+		return
+	}
+
+	// Get phone numbers from Twilio
+	twilioNumbers, err := h.deps.Twilio.ListIncomingPhoneNumbers(r.Context())
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "TWILIO_ERROR", "Failed to fetch phone numbers from Twilio: "+err.Error(), nil)
+		return
+	}
+
+	// Get existing DIDs
+	existingDIDs, err := h.deps.DB.DIDs.List(r.Context())
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+
+	// Create a map of existing DIDs by phone number
+	existingMap := make(map[string]*models.DID)
+	for _, did := range existingDIDs {
+		existingMap[did.Number] = did
+	}
+
+	var synced []*DIDResponse
+	var created, updated int
+
+	for _, tn := range twilioNumbers {
+		if existing, ok := existingMap[tn.PhoneNumber]; ok {
+			// Update existing DID
+			existing.TwilioSID = tn.SID
+			existing.SMSEnabled = tn.SMSEnabled
+			existing.VoiceEnabled = tn.VoiceEnabled
+			if existing.Name == "" && tn.FriendlyName != "" {
+				existing.Name = tn.FriendlyName
+			}
+			if err := h.deps.DB.DIDs.Update(r.Context(), existing); err != nil {
+				continue
+			}
+			synced = append(synced, toDIDResponse(existing))
+			updated++
+		} else {
+			// Create new DID
+			did := &models.DID{
+				Number:       tn.PhoneNumber,
+				TwilioSID:    tn.SID,
+				Name:         tn.FriendlyName,
+				SMSEnabled:   tn.SMSEnabled,
+				VoiceEnabled: tn.VoiceEnabled,
+			}
+			if err := h.deps.DB.DIDs.Create(r.Context(), did); err != nil {
+				continue
+			}
+			synced = append(synced, toDIDResponse(did))
+			created++
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "DIDs synced successfully",
+		"created": created,
+		"updated": updated,
+		"total":   len(synced),
+		"dids":    synced,
+	})
 }

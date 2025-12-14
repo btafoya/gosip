@@ -95,6 +95,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 			r.Route("/dids", func(r chi.Router) {
 				r.Get("/", didHandler.List)
 				r.Post("/", didHandler.Create)
+				r.Post("/sync", didHandler.SyncFromTwilio)
 				r.Get("/{id}", didHandler.Get)
 				r.Put("/{id}", didHandler.Update)
 				r.Delete("/{id}", didHandler.Delete)

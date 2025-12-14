@@ -262,6 +262,57 @@ type AvailableNumber struct {
 	FriendlyName string
 }
 
+// IncomingPhoneNumber represents an owned phone number
+type IncomingPhoneNumber struct {
+	SID           string
+	PhoneNumber   string
+	FriendlyName  string
+	SMSEnabled    bool
+	VoiceEnabled  bool
+}
+
+// ListIncomingPhoneNumbers returns phone numbers owned by the account
+func (c *Client) ListIncomingPhoneNumbers(ctx context.Context) ([]IncomingPhoneNumber, error) {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("twilio client not initialized")
+	}
+	client := c.client
+	c.mu.RUnlock()
+
+	params := &twilioApi.ListIncomingPhoneNumberParams{}
+
+	resp, err := client.Api.ListIncomingPhoneNumber(params)
+	if err != nil {
+		c.recordFailure()
+		return nil, fmt.Errorf("twilio API error: %w", err)
+	}
+
+	c.recordSuccess()
+
+	var numbers []IncomingPhoneNumber
+	for _, n := range resp {
+		number := IncomingPhoneNumber{}
+		if n.Sid != nil {
+			number.SID = *n.Sid
+		}
+		if n.PhoneNumber != nil {
+			number.PhoneNumber = *n.PhoneNumber
+		}
+		if n.FriendlyName != nil {
+			number.FriendlyName = *n.FriendlyName
+		}
+		if n.Capabilities != nil {
+			number.SMSEnabled = n.Capabilities.Sms
+			number.VoiceEnabled = n.Capabilities.Voice
+		}
+		numbers = append(numbers, number)
+	}
+
+	return numbers, nil
+}
+
 // PurchasePhoneNumber purchases a phone number
 func (c *Client) PurchasePhoneNumber(ctx context.Context, phoneNumber, voiceURL, smsURL string) (string, error) {
 	c.mu.RLock()

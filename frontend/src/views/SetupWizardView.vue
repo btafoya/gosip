@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { systemApi, type SetupRequest } from '@/api/auth'
+import { setupApi, type SetupRequest } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -61,7 +61,7 @@ async function handleSubmit() {
   error.value = null
 
   try {
-    await systemApi.setup(form.value)
+    await setupApi.complete(form.value)
     authStore.setupCompleted = true
     await authStore.login(form.value.admin_email, form.value.admin_password)
     router.push('/')

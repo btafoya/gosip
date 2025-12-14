@@ -1,10 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"runtime"
 	"time"
+
+	"github.com/btafoya/gosip/internal/models"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // SystemHandler handles system configuration and status API endpoints
@@ -23,14 +28,20 @@ func NewSystemHandler(deps *Dependencies) *SystemHandler {
 
 // ConfigResponse represents system configuration in API responses
 type ConfigResponse struct {
-	TwilioAccountSID   string `json:"twilio_account_sid,omitempty"`
-	TwilioConfigured   bool   `json:"twilio_configured"`
-	SMTPConfigured     bool   `json:"smtp_configured"`
-	GotifyConfigured   bool   `json:"gotify_configured"`
-	SetupCompleted     bool   `json:"setup_completed"`
-	VoicemailEnabled   bool   `json:"voicemail_enabled"`
-	RecordingEnabled   bool   `json:"recording_enabled"`
-	TranscriptionEnabled bool `json:"transcription_enabled"`
+	TwilioAccountSID     string `json:"twilio_account_sid,omitempty"`
+	TwilioConfigured     bool   `json:"twilio_configured"`
+	SMTPHost             string `json:"smtp_host,omitempty"`
+	SMTPPort             int    `json:"smtp_port,omitempty"`
+	SMTPUser             string `json:"smtp_user,omitempty"`
+	SMTPConfigured       bool   `json:"smtp_configured"`
+	GotifyURL            string `json:"gotify_url,omitempty"`
+	GotifyConfigured     bool   `json:"gotify_configured"`
+	SetupCompleted       bool   `json:"setup_completed"`
+	VoicemailEnabled     bool   `json:"voicemail_enabled"`
+	VoicemailGreeting    string `json:"voicemail_greeting,omitempty"`
+	RecordingEnabled     bool   `json:"recording_enabled"`
+	TranscriptionEnabled bool   `json:"transcription_enabled"`
+	Timezone             string `json:"timezone,omitempty"`
 }
 
 // GetConfig returns current system configuration
@@ -47,32 +58,53 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		cfg[c.Key] = c.Value
 	}
 
-	// Mask sensitive values
+	// Parse SMTP port
+	smtpPort := 587
+	if portStr := cfg["smtp_port"]; portStr != "" {
+		fmt.Sscanf(portStr, "%d", &smtpPort)
+	}
+
+	// Build response with actual values (this endpoint is admin-only)
 	response := ConfigResponse{
+		TwilioAccountSID:     cfg["twilio_account_sid"],
 		TwilioConfigured:     cfg["twilio_account_sid"] != "",
+		SMTPHost:             cfg["smtp_host"],
+		SMTPPort:             smtpPort,
+		SMTPUser:             cfg["smtp_user"],
 		SMTPConfigured:       cfg["smtp_host"] != "",
+		GotifyURL:            cfg["gotify_url"],
 		GotifyConfigured:     cfg["gotify_url"] != "",
 		SetupCompleted:       cfg["setup_completed"] == "true",
 		VoicemailEnabled:     cfg["voicemail_enabled"] == "true",
+		VoicemailGreeting:    cfg["voicemail_greeting"],
 		RecordingEnabled:     cfg["recording_enabled"] == "true",
 		TranscriptionEnabled: cfg["transcription_enabled"] == "true",
+		Timezone:             cfg["timezone"],
 	}
 
-	// Show partial account SID for verification
-	if sid := cfg["twilio_account_sid"]; sid != "" && len(sid) > 8 {
-		response.TwilioAccountSID = sid[:8] + "..."
+	// Default timezone if not set
+	if response.Timezone == "" {
+		response.Timezone = "America/New_York"
 	}
 
 	WriteJSON(w, http.StatusOK, response)
 }
 
-// UpdateConfigRequest represents a configuration update request
+// UpdateConfigRequest represents a bulk configuration update request
 type UpdateConfigRequest struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
+	TwilioAccountSID  string `json:"twilio_account_sid,omitempty"`
+	TwilioAuthToken   string `json:"twilio_auth_token,omitempty"`
+	SMTPHost          string `json:"smtp_host,omitempty"`
+	SMTPPort          int    `json:"smtp_port,omitempty"`
+	SMTPUser          string `json:"smtp_user,omitempty"`
+	SMTPPassword      string `json:"smtp_password,omitempty"`
+	GotifyURL         string `json:"gotify_url,omitempty"`
+	GotifyToken       string `json:"gotify_token,omitempty"`
+	VoicemailGreeting string `json:"voicemail_greeting,omitempty"`
+	Timezone          string `json:"timezone,omitempty"`
 }
 
-// UpdateConfig updates a system configuration value
+// UpdateConfig updates system configuration values
 func (h *SystemHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	var req UpdateConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -80,27 +112,48 @@ func (h *SystemHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate key
-	allowedKeys := map[string]bool{
-		"voicemail_enabled":     true,
-		"recording_enabled":     true,
-		"transcription_enabled": true,
-		"voicemail_greeting":    true,
-		"business_hours_start":  true,
-		"business_hours_end":    true,
-		"timezone":              true,
+	ctx := r.Context()
+
+	// Update Twilio settings (only if provided)
+	if req.TwilioAccountSID != "" {
+		h.deps.DB.Config.Set(ctx, "twilio_account_sid", req.TwilioAccountSID)
+	}
+	if req.TwilioAuthToken != "" {
+		h.deps.DB.Config.Set(ctx, "twilio_auth_token", req.TwilioAuthToken)
+		// Update Twilio client with new credentials
+		if h.deps.Twilio != nil && req.TwilioAccountSID != "" {
+			h.deps.Twilio.UpdateCredentials(req.TwilioAccountSID, req.TwilioAuthToken)
+		}
 	}
 
-	if !allowedKeys[req.Key] {
-		WriteValidationError(w, "Invalid configuration key", []FieldError{
-			{Field: "key", Message: "Configuration key not allowed"},
-		})
-		return
+	// Update SMTP settings
+	if req.SMTPHost != "" {
+		h.deps.DB.Config.Set(ctx, "smtp_host", req.SMTPHost)
+	}
+	if req.SMTPPort > 0 {
+		h.deps.DB.Config.Set(ctx, "smtp_port", fmt.Sprintf("%d", req.SMTPPort))
+	}
+	if req.SMTPUser != "" {
+		h.deps.DB.Config.Set(ctx, "smtp_user", req.SMTPUser)
+	}
+	if req.SMTPPassword != "" {
+		h.deps.DB.Config.Set(ctx, "smtp_password", req.SMTPPassword)
 	}
 
-	if err := h.deps.DB.Config.Set(r.Context(), req.Key, req.Value); err != nil {
-		WriteInternalError(w)
-		return
+	// Update Gotify settings
+	if req.GotifyURL != "" {
+		h.deps.DB.Config.Set(ctx, "gotify_url", req.GotifyURL)
+	}
+	if req.GotifyToken != "" {
+		h.deps.DB.Config.Set(ctx, "gotify_token", req.GotifyToken)
+	}
+
+	// Update general settings
+	if req.VoicemailGreeting != "" {
+		h.deps.DB.Config.Set(ctx, "voicemail_greeting", req.VoicemailGreeting)
+	}
+	if req.Timezone != "" {
+		h.deps.DB.Config.Set(ctx, "timezone", req.Timezone)
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]string{"message": "Configuration updated"})
@@ -364,8 +417,23 @@ func (h *SystemHandler) ToggleDND(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helper to create admin user during setup
-func createAdminUser(ctx interface{}, h *AuthHandler, email, password string) (int64, error) {
-	// This is handled by the auth handler's CreateUser method
-	// For setup, we create directly
-	return 0, nil
+func createAdminUser(ctx context.Context, h *AuthHandler, email, password string) (int64, error) {
+	// Hash password
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return 0, err
+	}
+
+	user := &models.User{
+		Email:        email,
+		PasswordHash: string(hash),
+		Role:         "admin",
+		CreatedAt:    time.Now(),
+	}
+
+	if err := h.deps.DB.Users.Create(ctx, user); err != nil {
+		return 0, err
+	}
+
+	return user.ID, nil
 }

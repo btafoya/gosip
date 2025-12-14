@@ -190,7 +190,7 @@ func (h *VoicemailHandler) ListUnread(w http.ResponseWriter, r *http.Request) {
 		response = append(response, toVoicemailResponse(v))
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	WriteJSON(w, http.StatusOK, map[string]interface{}{"data": response})
 }
 
 // MarkAsRead marks a voicemail as read (alias for MarkRead)

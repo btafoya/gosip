@@ -26,11 +26,13 @@ func TestDIDHandler_List(t *testing.T) {
 
 	assertStatus(t, rr, http.StatusOK)
 
-	var resp []*DIDResponse
-	decodeResponse(t, rr, &resp)
+	var wrapper struct {
+		Data []*DIDResponse `json:"data"`
+	}
+	decodeResponse(t, rr, &wrapper)
 
-	if len(resp) != 2 {
-		t.Errorf("Expected 2 DIDs, got %d", len(resp))
+	if len(wrapper.Data) != 2 {
+		t.Errorf("Expected 2 DIDs, got %d", len(wrapper.Data))
 	}
 }
 
@@ -59,17 +61,17 @@ func TestDIDHandler_Create(t *testing.T) {
 	var resp DIDResponse
 	decodeResponse(t, rr, &resp)
 
-	if resp.Number != "+15551234567" {
-		t.Errorf("Expected number +15551234567, got %s", resp.Number)
+	if resp.PhoneNumber != "+15551234567" {
+		t.Errorf("Expected number +15551234567, got %s", resp.PhoneNumber)
 	}
 	if resp.TwilioSID != "PN123456789" {
 		t.Errorf("Expected TwilioSID PN123456789, got %s", resp.TwilioSID)
 	}
-	if !resp.SMSEnabled {
-		t.Error("Expected SMSEnabled to be true")
+	if !resp.Capabilities.SMS {
+		t.Error("Expected SMS capability to be true")
 	}
-	if !resp.VoiceEnabled {
-		t.Error("Expected VoiceEnabled to be true")
+	if !resp.Capabilities.Voice {
+		t.Error("Expected Voice capability to be true")
 	}
 }
 
@@ -126,8 +128,8 @@ func TestDIDHandler_Get(t *testing.T) {
 	var resp DIDResponse
 	decodeResponse(t, rr, &resp)
 
-	if resp.Number != did.Number {
-		t.Errorf("Expected number %s, got %s", did.Number, resp.Number)
+	if resp.PhoneNumber != did.Number {
+		t.Errorf("Expected number %s, got %s", did.Number, resp.PhoneNumber)
 	}
 }
 
@@ -169,8 +171,8 @@ func TestDIDHandler_Update(t *testing.T) {
 
 	smsEnabled := false
 	reqBody := UpdateDIDRequest{
-		Name:       "Updated Name",
-		SMSEnabled: &smsEnabled,
+		FriendlyName: "Updated Name",
+		SMSEnabled:   &smsEnabled,
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -186,11 +188,11 @@ func TestDIDHandler_Update(t *testing.T) {
 	var resp DIDResponse
 	decodeResponse(t, rr, &resp)
 
-	if resp.Name != "Updated Name" {
-		t.Errorf("Expected name Updated Name, got %s", resp.Name)
+	if resp.FriendlyName != "Updated Name" {
+		t.Errorf("Expected name Updated Name, got %s", resp.FriendlyName)
 	}
-	if resp.SMSEnabled {
-		t.Error("Expected SMSEnabled to be false")
+	if resp.Capabilities.SMS {
+		t.Error("Expected SMS capability to be false")
 	}
 }
 
@@ -200,7 +202,7 @@ func TestDIDHandler_Update_NotFound(t *testing.T) {
 	handler := NewDIDHandler(deps)
 
 	reqBody := UpdateDIDRequest{
-		Name: "Updated Name",
+		FriendlyName: "Updated Name",
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -265,19 +267,19 @@ func TestDIDResponse_Format(t *testing.T) {
 	if resp.ID != 1 {
 		t.Errorf("Expected ID 1, got %d", resp.ID)
 	}
-	if resp.Number != "+15551234567" {
-		t.Errorf("Expected number +15551234567, got %s", resp.Number)
+	if resp.PhoneNumber != "+15551234567" {
+		t.Errorf("Expected number +15551234567, got %s", resp.PhoneNumber)
 	}
 	if resp.TwilioSID != "PN123" {
 		t.Errorf("Expected TwilioSID PN123, got %s", resp.TwilioSID)
 	}
-	if resp.Name != "Test DID" {
-		t.Errorf("Expected name Test DID, got %s", resp.Name)
+	if resp.FriendlyName != "Test DID" {
+		t.Errorf("Expected name Test DID, got %s", resp.FriendlyName)
 	}
-	if !resp.SMSEnabled {
-		t.Error("Expected SMSEnabled to be true")
+	if !resp.Capabilities.SMS {
+		t.Error("Expected SMS capability to be true")
 	}
-	if resp.VoiceEnabled {
-		t.Error("Expected VoiceEnabled to be false")
+	if resp.Capabilities.Voice {
+		t.Error("Expected Voice capability to be false")
 	}
 }

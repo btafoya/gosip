@@ -298,4 +298,3 @@ function formatDate(dateStr: string | undefined): string {
     </div>
   </div>
 </template>
-</script>

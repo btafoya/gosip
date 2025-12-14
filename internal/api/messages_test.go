@@ -337,11 +337,13 @@ func TestMessageHandler_GetConversation(t *testing.T) {
 
 	assertStatus(t, rr, http.StatusOK)
 
-	var resp []*MessageResponse
-	decodeResponse(t, rr, &resp)
+	var wrapper struct {
+		Data []*MessageResponse `json:"data"`
+	}
+	decodeResponse(t, rr, &wrapper)
 
-	if len(resp) != 2 {
-		t.Errorf("Expected 2 messages in conversation, got %d", len(resp))
+	if len(wrapper.Data) != 2 {
+		t.Errorf("Expected 2 messages in conversation, got %d", len(wrapper.Data))
 	}
 }
 
@@ -374,11 +376,13 @@ func TestMessageHandler_ListAutoReplies(t *testing.T) {
 
 	assertStatus(t, rr, http.StatusOK)
 
-	var resp []*AutoReplyResponse
-	decodeResponse(t, rr, &resp)
+	var wrapper struct {
+		Data []*AutoReplyResponse `json:"data"`
+	}
+	decodeResponse(t, rr, &wrapper)
 
-	if len(resp) != 2 {
-		t.Errorf("Expected 2 auto-replies, got %d", len(resp))
+	if len(wrapper.Data) != 2 {
+		t.Errorf("Expected 2 auto-replies, got %d", len(wrapper.Data))
 	}
 }
 

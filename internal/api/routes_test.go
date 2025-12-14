@@ -45,11 +45,13 @@ func TestRouteHandler_List(t *testing.T) {
 
 	assertStatus(t, rr, http.StatusOK)
 
-	var resp []*RouteResponse
-	decodeResponse(t, rr, &resp)
+	var wrapper struct {
+		Data []*RouteResponse `json:"data"`
+	}
+	decodeResponse(t, rr, &wrapper)
 
-	if len(resp) != 2 {
-		t.Errorf("Expected 2 routes, got %d", len(resp))
+	if len(wrapper.Data) != 2 {
+		t.Errorf("Expected 2 routes, got %d", len(wrapper.Data))
 	}
 }
 
@@ -71,11 +73,13 @@ func TestRouteHandler_List_FilterByDID(t *testing.T) {
 
 	assertStatus(t, rr, http.StatusOK)
 
-	var resp []*RouteResponse
-	decodeResponse(t, rr, &resp)
+	var wrapper struct {
+		Data []*RouteResponse `json:"data"`
+	}
+	decodeResponse(t, rr, &wrapper)
 
-	if len(resp) != 1 {
-		t.Errorf("Expected 1 route for DID, got %d", len(resp))
+	if len(wrapper.Data) != 1 {
+		t.Errorf("Expected 1 route for DID, got %d", len(wrapper.Data))
 	}
 }
 
@@ -321,11 +325,13 @@ func TestRouteHandler_ListBlocklist(t *testing.T) {
 
 	assertStatus(t, rr, http.StatusOK)
 
-	var resp []*models.BlocklistEntry
-	decodeResponse(t, rr, &resp)
+	var wrapper struct {
+		Data []*models.BlocklistEntry `json:"data"`
+	}
+	decodeResponse(t, rr, &wrapper)
 
-	if len(resp) != 1 {
-		t.Errorf("Expected 1 blocklist entry, got %d", len(resp))
+	if len(wrapper.Data) != 1 {
+		t.Errorf("Expected 1 blocklist entry, got %d", len(wrapper.Data))
 	}
 }
 

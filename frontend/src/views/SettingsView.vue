@@ -81,7 +81,7 @@ async function loadNotificationSettings() {
 async function loadSystemSettings() {
   try {
     const response = await api.get('/system/config')
-    const config = response.data.data || {}
+    const config = response.data || {}
     systemSettings.value = {
       twilio_account_sid: config.twilio_account_sid || '',
       twilio_auth_token: '',
@@ -526,4 +526,3 @@ function clearMessages() {
     </div>
   </div>
 </template>
-</script>

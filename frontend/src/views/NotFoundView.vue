@@ -43,4 +43,3 @@ function goHome() {
     </div>
   </div>
 </template>
-</script>

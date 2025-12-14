@@ -12,16 +12,18 @@ import (
 
 	"github.com/btafoya/gosip/internal/db"
 	"github.com/btafoya/gosip/internal/models"
+	"github.com/btafoya/gosip/internal/twilio"
 	"github.com/go-chi/chi/v5"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // MockTwilioClient is a mock implementation of TwilioClient for testing
 type MockTwilioClient struct {
-	SendSMSFunc             func(from, to, body string, mediaURLs []string) (string, error)
-	UpdateCredentialsFunc   func(accountSID, authToken string)
-	IsHealthyFunc           func() bool
-	RequestTranscriptionFunc func(recordingSID string, voicemailID int64) error
+	SendSMSFunc                   func(from, to, body string, mediaURLs []string) (string, error)
+	UpdateCredentialsFunc         func(accountSID, authToken string)
+	IsHealthyFunc                 func() bool
+	RequestTranscriptionFunc      func(recordingSID string, voicemailID int64) error
+	ListIncomingPhoneNumbersFunc  func(ctx context.Context) ([]twilio.IncomingPhoneNumber, error)
 }
 
 func (m *MockTwilioClient) SendSMS(from, to, body string, mediaURLs []string) (string, error) {
@@ -49,6 +51,13 @@ func (m *MockTwilioClient) RequestTranscription(recordingSID string, voicemailID
 		return m.RequestTranscriptionFunc(recordingSID, voicemailID)
 	}
 	return nil
+}
+
+func (m *MockTwilioClient) ListIncomingPhoneNumbers(ctx context.Context) ([]twilio.IncomingPhoneNumber, error) {
+	if m.ListIncomingPhoneNumbersFunc != nil {
+		return m.ListIncomingPhoneNumbersFunc(ctx)
+	}
+	return []twilio.IncomingPhoneNumber{}, nil
 }
 
 // MockNotifier is a mock implementation of Notifier for testing

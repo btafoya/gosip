@@ -1,4 +1,4 @@
-import { get, post } from './client'
+import { get, post, put } from './client'
 
 export interface User {
   id: number
@@ -45,9 +45,9 @@ export interface SetupRequest {
 export const authApi = {
   login: (data: LoginRequest) => post<LoginResponse>('/auth/login', data),
   logout: () => post<{ message: string }>('/auth/logout'),
-  getCurrentUser: () => get<User>('/auth/me'),
+  getCurrentUser: () => get<User>('/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
-    post<{ message: string }>('/auth/password', {
+    put<{ message: string }>('/me/password', {
       current_password: currentPassword,
       new_password: newPassword
     })

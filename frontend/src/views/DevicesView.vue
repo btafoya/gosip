@@ -276,4 +276,3 @@ const registeredCount = computed(() => devices.value.filter(d => d.registered).l
     </div>
   </div>
 </template>
-</script>

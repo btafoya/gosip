@@ -267,7 +267,7 @@ func (h *MessageHandler) GetConversation(w http.ResponseWriter, r *http.Request)
 		response = append(response, toMessageResponse(m))
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	WriteJSON(w, http.StatusOK, map[string]interface{}{"data": response})
 }
 
 // GetConversations returns a list of conversation summaries
@@ -290,7 +290,7 @@ func (h *MessageHandler) GetConversations(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, conversations)
+	WriteJSON(w, http.StatusOK, map[string]interface{}{"data": conversations})
 }
 
 // MarkAsRead marks a message as read
@@ -334,7 +334,7 @@ func (h *MessageHandler) ListAutoReplies(w http.ResponseWriter, r *http.Request)
 		response = append(response, toAutoReplyResponse(rule))
 	}
 
-	WriteJSON(w, http.StatusOK, response)
+	WriteJSON(w, http.StatusOK, map[string]interface{}{"data": response})
 }
 
 // CreateAutoReplyRequest represents an auto-reply creation request

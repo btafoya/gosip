@@ -222,4 +222,3 @@ const unreadCount = computed(() => voicemails.value.filter(v => !v.read).length)
     </div>
   </div>
 </template>
-</script>
