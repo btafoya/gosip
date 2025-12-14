@@ -53,7 +53,13 @@ export const authApi = {
     })
 }
 
-// System API
+// Setup API (public endpoints)
+export const setupApi = {
+  getStatus: () => get<{ setup_completed: boolean }>('/setup/status'),
+  complete: (data: SetupRequest) => post<{ message: string }>('/setup/complete', data)
+}
+
+// System API (requires auth)
 export const systemApi = {
   getConfig: () => get<SystemConfig>('/system/config'),
   getStatus: () => get<{

@@ -39,7 +39,7 @@ dev: ## Run in development mode with hot reload
 		air -c .air.toml; \
 	else \
 		echo "Installing air..."; \
-		go install github.com/cosmtrek/air@latest; \
+		go install github.com/air-verse/air@latest; \
 		air -c .air.toml; \
 	fi
 
@@ -153,7 +153,7 @@ clean: ## Clean build artifacts
 
 install-tools: ## Install development tools
 	@echo "Installing development tools..."
-	go install github.com/cosmtrek/air@latest
+	go install github.com/air-verse/air@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 ## Environment setup

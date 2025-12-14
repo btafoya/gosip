@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { authApi, systemApi, type User } from '@/api/auth'
+import { authApi, setupApi, type User } from '@/api/auth'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
@@ -17,24 +17,30 @@ export const useAuthStore = defineStore('auth', () => {
     if (initialized.value) return
 
     try {
-      // First check if setup is completed
-      const config = await systemApi.getConfig()
-      setupCompleted.value = config.setup_completed
+      // First check if setup is completed (public endpoint)
+      const status = await setupApi.getStatus()
+      setupCompleted.value = status.setup_completed
 
-      if (!config.setup_completed) {
+      if (!status.setup_completed) {
         initialized.value = true
         return
       }
 
       // Then check if user is authenticated
       if (token.value) {
-        const currentUser = await authApi.getCurrentUser()
-        user.value = currentUser
+        try {
+          const currentUser = await authApi.getCurrentUser()
+          user.value = currentUser
+        } catch {
+          // Token invalid or expired
+          user.value = null
+          token.value = null
+          localStorage.removeItem('token')
+        }
       }
     } catch {
-      user.value = null
-      token.value = null
-      localStorage.removeItem('token')
+      // Setup status check failed - assume setup not completed
+      setupCompleted.value = false
     } finally {
       initialized.value = true
     }
