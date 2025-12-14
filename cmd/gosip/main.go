@@ -73,6 +73,15 @@ func main() {
 
 	// Initialize Twilio client
 	twilioClient := twilio.NewClient(cfg)
+
+	// Load Twilio credentials from database if they exist
+	if accountSID, err := database.Config.Get(ctx, "twilio_account_sid"); err == nil && accountSID != "" {
+		if authToken, err := database.Config.Get(ctx, "twilio_auth_token"); err == nil && authToken != "" {
+			twilioClient.UpdateCredentials(accountSID, authToken)
+			slog.Info("Twilio credentials loaded from database")
+		}
+	}
+
 	twilioClient.Start(ctx)
 	defer twilioClient.Stop()
 	slog.Info("Twilio client initialized")
