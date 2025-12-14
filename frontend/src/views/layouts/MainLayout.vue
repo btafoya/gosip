@@ -12,7 +12,8 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  X
+  X,
+  Smartphone
 } from 'lucide-vue-next'
 import { ref } from 'vue'
 
@@ -23,6 +24,7 @@ const sidebarOpen = ref(false)
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Devices', href: '/devices', icon: Monitor },
+  { name: 'Provisioning', href: '/provisioning', icon: Smartphone },
   { name: 'Phone Numbers', href: '/dids', icon: Phone },
   { name: 'Call Routing', href: '/routes', icon: Route },
   { name: 'Call History', href: '/calls', icon: Phone },

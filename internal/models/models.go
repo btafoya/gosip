@@ -19,14 +19,23 @@ type User struct {
 
 // Device represents a registered SIP device (phone, softphone, etc.)
 type Device struct {
-	ID               int64     `json:"id"`
-	UserID           *int64    `json:"user_id,omitempty"`
-	Name             string    `json:"name"`
-	Username         string    `json:"username"`
-	PasswordHash     string    `json:"-"`
-	DeviceType       string    `json:"device_type"` // "grandstream", "softphone", "webrtc"
-	RecordingEnabled bool      `json:"recording_enabled"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                 int64      `json:"id"`
+	UserID             *int64     `json:"user_id,omitempty"`
+	Name               string     `json:"name"`
+	Username           string     `json:"username"`
+	PasswordHash       string     `json:"-"`
+	DeviceType         string     `json:"device_type"` // "grandstream", "softphone", "webrtc"
+	RecordingEnabled   bool       `json:"recording_enabled"`
+	CreatedAt          time.Time  `json:"created_at"`
+	// Provisioning fields
+	MACAddress         *string    `json:"mac_address,omitempty"`
+	Vendor             *string    `json:"vendor,omitempty"`
+	Model              *string    `json:"model,omitempty"`
+	FirmwareVersion    *string    `json:"firmware_version,omitempty"`
+	ProvisioningStatus string     `json:"provisioning_status"` // "pending", "provisioned", "failed", "unknown"
+	LastConfigFetch    *time.Time `json:"last_config_fetch,omitempty"`
+	LastRegistration   *time.Time `json:"last_registration,omitempty"`
+	ConfigTemplate     *string    `json:"config_template,omitempty"`
 }
 
 // Registration represents an active SIP registration
@@ -161,4 +170,70 @@ type SystemConfig struct {
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ProvisioningToken represents a tokened URL for device auto-provisioning
+type ProvisioningToken struct {
+	ID            int64      `json:"id"`
+	Token         string     `json:"token"`
+	DeviceID      int64      `json:"device_id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	Revoked       bool       `json:"revoked"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	UsedCount     int        `json:"used_count"`
+	MaxUses       int        `json:"max_uses"`
+	IPRestriction *string    `json:"ip_restriction,omitempty"`
+	CreatedBy     *int64     `json:"created_by,omitempty"`
+}
+
+// ProvisioningProfile represents a vendor/model configuration template
+type ProvisioningProfile struct {
+	ID             int64           `json:"id"`
+	Name           string          `json:"name"`
+	Vendor         string          `json:"vendor"`
+	Model          *string         `json:"model,omitempty"`
+	Description    *string         `json:"description,omitempty"`
+	ConfigTemplate string          `json:"config_template"`
+	Variables      json.RawMessage `json:"variables,omitempty"`
+	IsDefault      bool            `json:"is_default"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+// DeviceEvent represents an operational event for a device
+type DeviceEvent struct {
+	ID        int64           `json:"id"`
+	DeviceID  int64           `json:"device_id"`
+	EventType string          `json:"event_type"` // "config_fetch", "registration", "provision_complete", etc.
+	EventData json.RawMessage `json:"event_data,omitempty"`
+	IPAddress *string         `json:"ip_address,omitempty"`
+	UserAgent *string         `json:"user_agent,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// ProvisioningRequest represents a request to provision a device
+type ProvisioningRequest struct {
+	DeviceName   string `json:"device_name"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	DeviceType   string `json:"device_type"`
+	Vendor       string `json:"vendor"`
+	Model        string `json:"model,omitempty"`
+	MACAddress   string `json:"mac_address,omitempty"`
+	ProfileID    *int64 `json:"profile_id,omitempty"`
+	UserID       *int64 `json:"user_id,omitempty"`
+	GenerateURL  bool   `json:"generate_url"`
+	URLExpiresIn int    `json:"url_expires_in"` // seconds
+}
+
+// ProvisioningResponse represents the response from provisioning a device
+type ProvisioningResponse struct {
+	Device           *Device `json:"device"`
+	ProvisioningURL  string  `json:"provisioning_url,omitempty"`
+	Token            string  `json:"token,omitempty"`
+	TokenExpiresAt   string  `json:"token_expires_at,omitempty"`
+	SIPServer        string  `json:"sip_server"`
+	SIPPort          int     `json:"sip_port"`
+	ConfigInstructions string `json:"config_instructions,omitempty"`
 }

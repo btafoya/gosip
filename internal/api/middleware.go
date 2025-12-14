@@ -90,6 +90,15 @@ func GetUserFromContext(ctx context.Context) *models.User {
 	return user
 }
 
+// getUserIDFromContext retrieves the authenticated user's ID from context
+func getUserIDFromContext(ctx context.Context) int64 {
+	user := GetUserFromContext(ctx)
+	if user == nil {
+		return 0
+	}
+	return user.ID
+}
+
 // Session management (simple implementation - consider using a proper session store for production)
 // In production, use Redis or similar for session storage
 

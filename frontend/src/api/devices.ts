@@ -9,6 +9,19 @@ export interface Device {
   recording_enabled: boolean
   created_at: string
   online: boolean
+  registered?: boolean
+  extension?: string
+  caller_id?: string
+  user_agent?: string
+  // Provisioning fields
+  mac_address?: string
+  vendor?: string
+  model?: string
+  firmware_version?: string
+  provisioning_status?: 'pending' | 'provisioned' | 'failed' | 'unknown'
+  last_config_fetch?: string
+  last_registration?: string
+  config_template?: string
 }
 
 export interface CreateDeviceRequest {
@@ -26,6 +39,8 @@ export interface UpdateDeviceRequest {
   device_type?: string
   recording_enabled?: boolean
   user_id?: number
+  vendor?: string
+  model?: string
 }
 
 export interface Registration {

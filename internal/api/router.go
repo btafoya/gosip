@@ -40,6 +40,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 	messageHandler := NewMessageHandler(deps)
 	systemHandler := NewSystemHandler(deps)
 	webhookHandler := NewWebhookHandler(deps)
+	provisioningHandler := NewProvisioningHandler(deps)
 
 	// Health endpoints
 	healthHandler := NewHealthHandler("0.1.0")
@@ -73,6 +74,9 @@ func NewRouter(deps *Dependencies) chi.Router {
 			r.Post("/transcription", webhookHandler.Transcription)
 		})
 
+		// Device provisioning endpoint (public, secured by token)
+		r.Get("/provision/{token}", provisioningHandler.GetDeviceConfig)
+
 		// Protected routes
 		r.Group(func(r chi.Router) {
 			r.Use(AuthMiddleware(deps))
@@ -89,6 +93,23 @@ func NewRouter(deps *Dependencies) chi.Router {
 				r.Get("/{id}", deviceHandler.Get)
 				r.Put("/{id}", deviceHandler.Update)
 				r.Delete("/{id}", deviceHandler.Delete)
+				r.Get("/{id}/events", provisioningHandler.GetDeviceEvents)
+			})
+
+			// Provisioning
+			r.Route("/provisioning", func(r chi.Router) {
+				r.Post("/device", provisioningHandler.ProvisionDevice)
+				r.Get("/vendors", provisioningHandler.ListVendors)
+				r.Get("/tokens", provisioningHandler.ListTokens)
+				r.Post("/tokens", provisioningHandler.CreateToken)
+				r.Delete("/tokens/{id}", provisioningHandler.RevokeToken)
+				r.Get("/events", provisioningHandler.GetRecentEvents)
+
+				// Profile routes (GET is public, POST/PUT/DELETE require admin)
+				r.Route("/profiles", func(r chi.Router) {
+					r.Get("/", provisioningHandler.ListProfiles)
+					r.Get("/{id}", provisioningHandler.GetProfile)
+				})
 			})
 
 			// DIDs
@@ -157,6 +178,11 @@ func NewRouter(deps *Dependencies) chi.Router {
 					r.Put("/{id}", authHandler.UpdateUser)
 					r.Delete("/{id}", authHandler.DeleteUser)
 				})
+
+				// Provisioning profile management (admin only)
+				r.Post("/provisioning/profiles", provisioningHandler.CreateProfile)
+				r.Put("/provisioning/profiles/{id}", provisioningHandler.UpdateProfile)
+				r.Delete("/provisioning/profiles/{id}", provisioningHandler.DeleteProfile)
 
 				// System configuration
 				r.Route("/system", func(r chi.Router) {

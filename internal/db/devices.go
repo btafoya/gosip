@@ -26,10 +26,18 @@ func NewDeviceRepository(db *sql.DB) *DeviceRepository {
 
 // Create inserts a new device
 func (r *DeviceRepository) Create(ctx context.Context, device *models.Device) error {
+	now := time.Now()
+	device.CreatedAt = now
+	if device.ProvisioningStatus == "" {
+		device.ProvisioningStatus = "unknown"
+	}
+
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO devices (user_id, name, username, password_hash, device_type, recording_enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, device.UserID, device.Name, device.Username, device.PasswordHash, device.DeviceType, device.RecordingEnabled, time.Now())
+		INSERT INTO devices (user_id, name, username, password_hash, device_type, recording_enabled, created_at,
+			mac_address, vendor, model, firmware_version, provisioning_status, config_template)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, device.UserID, device.Name, device.Username, device.PasswordHash, device.DeviceType, device.RecordingEnabled, now,
+		device.MACAddress, device.Vendor, device.Model, device.FirmwareVersion, device.ProvisioningStatus, device.ConfigTemplate)
 	if err != nil {
 		return err
 	}
@@ -46,9 +54,11 @@ func (r *DeviceRepository) Create(ctx context.Context, device *models.Device) er
 func (r *DeviceRepository) GetByID(ctx context.Context, id int64) (*models.Device, error) {
 	device := &models.Device{}
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at
+		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at,
+			mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template
 		FROM devices WHERE id = ?
-	`, id).Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt)
+	`, id).Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt,
+		&device.MACAddress, &device.Vendor, &device.Model, &device.FirmwareVersion, &device.ProvisioningStatus, &device.LastConfigFetch, &device.LastRegistration, &device.ConfigTemplate)
 	if err == sql.ErrNoRows {
 		return nil, ErrDeviceNotFound
 	}
@@ -62,9 +72,29 @@ func (r *DeviceRepository) GetByID(ctx context.Context, id int64) (*models.Devic
 func (r *DeviceRepository) GetByUsername(ctx context.Context, username string) (*models.Device, error) {
 	device := &models.Device{}
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at
+		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at,
+			mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template
 		FROM devices WHERE username = ?
-	`, username).Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt)
+	`, username).Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt,
+		&device.MACAddress, &device.Vendor, &device.Model, &device.FirmwareVersion, &device.ProvisioningStatus, &device.LastConfigFetch, &device.LastRegistration, &device.ConfigTemplate)
+	if err == sql.ErrNoRows {
+		return nil, ErrDeviceNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return device, nil
+}
+
+// GetByMAC retrieves a device by MAC address
+func (r *DeviceRepository) GetByMAC(ctx context.Context, mac string) (*models.Device, error) {
+	device := &models.Device{}
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at,
+			mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template
+		FROM devices WHERE mac_address = ?
+	`, mac).Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt,
+		&device.MACAddress, &device.Vendor, &device.Model, &device.FirmwareVersion, &device.ProvisioningStatus, &device.LastConfigFetch, &device.LastRegistration, &device.ConfigTemplate)
 	if err == sql.ErrNoRows {
 		return nil, ErrDeviceNotFound
 	}
@@ -78,9 +108,30 @@ func (r *DeviceRepository) GetByUsername(ctx context.Context, username string) (
 func (r *DeviceRepository) Update(ctx context.Context, device *models.Device) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE devices SET user_id = ?, name = ?, username = ?, password_hash = ?,
-		device_type = ?, recording_enabled = ?
+		device_type = ?, recording_enabled = ?, mac_address = ?, vendor = ?, model = ?,
+		firmware_version = ?, provisioning_status = ?, last_config_fetch = ?, last_registration = ?, config_template = ?
 		WHERE id = ?
-	`, device.UserID, device.Name, device.Username, device.PasswordHash, device.DeviceType, device.RecordingEnabled, device.ID)
+	`, device.UserID, device.Name, device.Username, device.PasswordHash, device.DeviceType, device.RecordingEnabled,
+		device.MACAddress, device.Vendor, device.Model, device.FirmwareVersion, device.ProvisioningStatus,
+		device.LastConfigFetch, device.LastRegistration, device.ConfigTemplate, device.ID)
+	return err
+}
+
+// UpdateProvisioningStatus updates just the provisioning status of a device
+func (r *DeviceRepository) UpdateProvisioningStatus(ctx context.Context, id int64, status string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE devices SET provisioning_status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+// UpdateLastConfigFetch updates the last config fetch timestamp
+func (r *DeviceRepository) UpdateLastConfigFetch(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE devices SET last_config_fetch = ? WHERE id = ?`, time.Now(), id)
+	return err
+}
+
+// UpdateLastRegistration updates the last registration timestamp
+func (r *DeviceRepository) UpdateLastRegistration(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE devices SET last_registration = ? WHERE id = ?`, time.Now(), id)
 	return err
 }
 
@@ -93,7 +144,8 @@ func (r *DeviceRepository) Delete(ctx context.Context, id int64) error {
 // List returns all devices with pagination
 func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]*models.Device, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at
+		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at,
+			mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template
 		FROM devices ORDER BY name ASC LIMIT ? OFFSET ?
 	`, limit, offset)
 	if err != nil {
@@ -104,7 +156,8 @@ func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]*mode
 	var devices []*models.Device
 	for rows.Next() {
 		device := &models.Device{}
-		if err := rows.Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt); err != nil {
+		if err := rows.Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt,
+			&device.MACAddress, &device.Vendor, &device.Model, &device.FirmwareVersion, &device.ProvisioningStatus, &device.LastConfigFetch, &device.LastRegistration, &device.ConfigTemplate); err != nil {
 			return nil, err
 		}
 		devices = append(devices, device)
@@ -115,7 +168,8 @@ func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]*mode
 // ListByUser returns all devices for a specific user
 func (r *DeviceRepository) ListByUser(ctx context.Context, userID int64) ([]*models.Device, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at
+		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at,
+			mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template
 		FROM devices WHERE user_id = ? ORDER BY name ASC
 	`, userID)
 	if err != nil {
@@ -126,7 +180,32 @@ func (r *DeviceRepository) ListByUser(ctx context.Context, userID int64) ([]*mod
 	var devices []*models.Device
 	for rows.Next() {
 		device := &models.Device{}
-		if err := rows.Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt); err != nil {
+		if err := rows.Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt,
+			&device.MACAddress, &device.Vendor, &device.Model, &device.FirmwareVersion, &device.ProvisioningStatus, &device.LastConfigFetch, &device.LastRegistration, &device.ConfigTemplate); err != nil {
+			return nil, err
+		}
+		devices = append(devices, device)
+	}
+	return devices, rows.Err()
+}
+
+// ListByProvisioningStatus returns devices with a specific provisioning status
+func (r *DeviceRepository) ListByProvisioningStatus(ctx context.Context, status string) ([]*models.Device, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at,
+			mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template
+		FROM devices WHERE provisioning_status = ? ORDER BY name ASC
+	`, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []*models.Device
+	for rows.Next() {
+		device := &models.Device{}
+		if err := rows.Scan(&device.ID, &device.UserID, &device.Name, &device.Username, &device.PasswordHash, &device.DeviceType, &device.RecordingEnabled, &device.CreatedAt,
+			&device.MACAddress, &device.Vendor, &device.Model, &device.FirmwareVersion, &device.ProvisioningStatus, &device.LastConfigFetch, &device.LastRegistration, &device.ConfigTemplate); err != nil {
 			return nil, err
 		}
 		devices = append(devices, device)

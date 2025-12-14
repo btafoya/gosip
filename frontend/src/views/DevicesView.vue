@@ -25,7 +25,9 @@ async function loadDevices() {
   loading.value = true
   error.value = null
   try {
-    devices.value = await devicesApi.list()
+    const response = await devicesApi.list()
+    // Handle paginated response - data can be null when empty
+    devices.value = response?.data || []
   } catch {
     error.value = 'Failed to load devices'
   } finally {

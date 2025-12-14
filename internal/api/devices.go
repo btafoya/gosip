@@ -24,14 +24,18 @@ func NewDeviceHandler(deps *Dependencies) *DeviceHandler {
 
 // DeviceResponse represents a device in API responses
 type DeviceResponse struct {
-	ID               int64  `json:"id"`
-	UserID           *int64 `json:"user_id,omitempty"`
-	Name             string `json:"name"`
-	Username         string `json:"username"`
-	DeviceType       string `json:"device_type"`
-	RecordingEnabled bool   `json:"recording_enabled"`
-	CreatedAt        string `json:"created_at"`
-	Online           bool   `json:"online"`
+	ID                 int64   `json:"id"`
+	UserID             *int64  `json:"user_id,omitempty"`
+	Name               string  `json:"name"`
+	Username           string  `json:"username"`
+	DeviceType         string  `json:"device_type"`
+	RecordingEnabled   bool    `json:"recording_enabled"`
+	CreatedAt          string  `json:"created_at"`
+	Online             bool    `json:"online"`
+	Vendor             *string `json:"vendor,omitempty"`
+	Model              *string `json:"model,omitempty"`
+	ProvisioningStatus string  `json:"provisioning_status,omitempty"`
+	LastConfigFetch    *string `json:"last_config_fetch,omitempty"`
 }
 
 // List returns all devices
@@ -155,11 +159,13 @@ func (h *DeviceHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // UpdateDeviceRequest represents a device update request
 type UpdateDeviceRequest struct {
-	Name             string `json:"name,omitempty"`
-	Password         string `json:"password,omitempty"`
-	DeviceType       string `json:"device_type,omitempty"`
-	RecordingEnabled *bool  `json:"recording_enabled,omitempty"`
-	UserID           *int64 `json:"user_id,omitempty"`
+	Name             string  `json:"name,omitempty"`
+	Password         string  `json:"password,omitempty"`
+	DeviceType       string  `json:"device_type,omitempty"`
+	RecordingEnabled *bool   `json:"recording_enabled,omitempty"`
+	UserID           *int64  `json:"user_id,omitempty"`
+	Vendor           *string `json:"vendor,omitempty"`
+	Model            *string `json:"model,omitempty"`
 }
 
 // Update updates a device
@@ -200,6 +206,12 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.UserID != nil {
 		device.UserID = req.UserID
+	}
+	if req.Vendor != nil {
+		device.Vendor = req.Vendor
+	}
+	if req.Model != nil {
+		device.Model = req.Model
 	}
 
 	if err := h.deps.DB.Devices.Update(r.Context(), device); err != nil {
@@ -246,14 +258,22 @@ func (h *DeviceHandler) GetRegistrations(w http.ResponseWriter, r *http.Request)
 }
 
 func toDeviceResponse(device *models.Device, online bool) *DeviceResponse {
-	return &DeviceResponse{
-		ID:               device.ID,
-		UserID:           device.UserID,
-		Name:             device.Name,
-		Username:         device.Username,
-		DeviceType:       device.DeviceType,
-		RecordingEnabled: device.RecordingEnabled,
-		CreatedAt:        device.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		Online:           online,
+	resp := &DeviceResponse{
+		ID:                 device.ID,
+		UserID:             device.UserID,
+		Name:               device.Name,
+		Username:           device.Username,
+		DeviceType:         device.DeviceType,
+		RecordingEnabled:   device.RecordingEnabled,
+		CreatedAt:          device.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		Online:             online,
+		Vendor:             device.Vendor,
+		Model:              device.Model,
+		ProvisioningStatus: device.ProvisioningStatus,
 	}
+	if device.LastConfigFetch != nil {
+		formatted := device.LastConfigFetch.Format("2006-01-02T15:04:05Z")
+		resp.LastConfigFetch = &formatted
+	}
+	return resp
 }

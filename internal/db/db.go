@@ -32,6 +32,11 @@ type DB struct {
 	Messages      *MessageRepository
 	AutoReplies   *AutoReplyRepository
 	Config        *ConfigRepository
+
+	// Provisioning repositories
+	ProvisioningTokens   *ProvisioningTokenRepository
+	ProvisioningProfiles *ProvisioningProfileRepository
+	DeviceEvents         *DeviceEventRepository
 }
 
 // New creates a new database connection and initializes repositories
@@ -72,6 +77,11 @@ func New(dbPath string) (*DB, error) {
 	db.Messages = NewMessageRepository(conn)
 	db.AutoReplies = NewAutoReplyRepository(conn)
 	db.Config = NewConfigRepository(conn)
+
+	// Provisioning repositories
+	db.ProvisioningTokens = NewProvisioningTokenRepository(conn)
+	db.ProvisioningProfiles = NewProvisioningProfileRepository(conn)
+	db.DeviceEvents = NewDeviceEventRepository(conn)
 
 	return db, nil
 }
