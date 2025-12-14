@@ -14,6 +14,7 @@ import (
 	"github.com/btafoya/gosip/internal/api"
 	"github.com/btafoya/gosip/internal/config"
 	"github.com/btafoya/gosip/internal/db"
+	"github.com/btafoya/gosip/internal/twilio"
 	"github.com/btafoya/gosip/pkg/sip"
 )
 
@@ -70,11 +71,18 @@ func main() {
 	}
 	slog.Info("SIP server started", "port", cfg.SIPPort)
 
+	// Initialize Twilio client
+	twilioClient := twilio.NewClient(cfg)
+	twilioClient.Start(ctx)
+	defer twilioClient.Stop()
+	slog.Info("Twilio client initialized")
+
 	// Initialize and start HTTP server
 	router := api.NewRouter(&api.Dependencies{
-		Config:   cfg,
-		DB:       database,
-		SIP:      sipServer,
+		Config: cfg,
+		DB:     database,
+		SIP:    sipServer,
+		Twilio: twilioClient,
 	})
 
 	httpServer := &http.Server{
