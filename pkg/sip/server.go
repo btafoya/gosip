@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btafoya/gosip/internal/config"
 	"github.com/btafoya/gosip/internal/db"
 	"github.com/emiago/sipgo"
 )
@@ -18,6 +19,9 @@ type Config struct {
 	UserAgent  string
 	MOHEnabled bool
 	MOHPath    string
+	DataDir    string // Data directory for certificates
+	TLS        *config.TLSConfig
+	SRTP       *config.SRTPConfig
 }
 
 // Server wraps sipgo server with GoSIP-specific functionality
@@ -29,6 +33,9 @@ type Server struct {
 	db        *db.DB
 	registrar *Registrar
 	auth      *Authenticator
+
+	// TLS/Certificate management
+	certMgr *CertManager
 
 	// Call control managers
 	sessions    *SessionManager
@@ -90,6 +97,19 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 		mwiMgr:    mwiMgr,
 	}
 
+	// Initialize TLS certificate manager if TLS is enabled
+	if cfg.TLS != nil && cfg.TLS.Enabled {
+		certMgr, err := NewCertManager(cfg.TLS, cfg.DataDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize TLS certificate manager: %w", err)
+		}
+		server.certMgr = certMgr
+		slog.Info("TLS certificate manager initialized",
+			"mode", cfg.TLS.CertMode,
+			"port", cfg.TLS.Port,
+		)
+	}
+
 	// Initialize hold manager (needs server reference)
 	server.holdMgr = NewHoldManager(server, sessions, mohMgr)
 
@@ -144,6 +164,31 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}()
 
+	// Start TLS listener if TLS is enabled
+	if s.certMgr != nil && s.cfg.TLS != nil {
+		tlsConfig := s.certMgr.GetTLSConfig()
+		if tlsConfig != nil {
+			tlsAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.TLS.Port)
+			go func() {
+				slog.Info("Starting SIP TLS listener (SIPS)", "addr", tlsAddr)
+				if err := s.srv.ListenAndServeTLS(ctx, "tcp", tlsAddr, tlsConfig); err != nil {
+					slog.Error("SIP TLS listener error", "error", err)
+				}
+			}()
+
+			// Start WSS listener if configured
+			if s.cfg.TLS.WSSPort > 0 {
+				wssAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.TLS.WSSPort)
+				go func() {
+					slog.Info("Starting SIP WSS listener", "addr", wssAddr)
+					if err := s.srv.ListenAndServeTLS(ctx, "wss", wssAddr, tlsConfig); err != nil {
+						slog.Error("SIP WSS listener error", "error", err)
+					}
+				}()
+			}
+		}
+	}
+
 	// Start registration cleanup goroutine
 	go s.cleanupExpiredRegistrations(ctx)
 
@@ -167,6 +212,13 @@ func (s *Server) Stop() {
 
 	if s.cancelFn != nil {
 		s.cancelFn()
+	}
+
+	// Close certificate manager
+	if s.certMgr != nil {
+		if err := s.certMgr.Close(); err != nil {
+			slog.Error("Failed to close certificate manager", "error", err)
+		}
 	}
 
 	s.running = false
@@ -319,4 +371,39 @@ func (s *Server) SendMWINotify(ctx context.Context, sub *MWISubscription, body s
 	// - Body: message-summary content
 
 	return nil
+}
+
+// GetCertManager returns the certificate manager for external access
+func (s *Server) GetCertManager() *CertManager {
+	return s.certMgr
+}
+
+// GetTLSStatus returns the current TLS certificate status
+func (s *Server) GetTLSStatus() *CertStatus {
+	if s.certMgr == nil {
+		return &CertStatus{Enabled: false}
+	}
+	status := s.certMgr.GetStatus()
+	return &status
+}
+
+// IsTLSEnabled returns whether TLS is enabled on the server
+func (s *Server) IsTLSEnabled() bool {
+	return s.certMgr != nil && s.cfg.TLS != nil && s.cfg.TLS.Enabled
+}
+
+// ForceRenewal triggers immediate certificate renewal (ACME mode only)
+func (s *Server) ForceRenewal(ctx context.Context) error {
+	if s.certMgr == nil {
+		return fmt.Errorf("TLS not enabled")
+	}
+	return s.certMgr.ForceRenewal(ctx)
+}
+
+// ReloadCertificates reloads certificates from files (manual mode only)
+func (s *Server) ReloadCertificates() error {
+	if s.certMgr == nil {
+		return fmt.Errorf("TLS not enabled")
+	}
+	return s.certMgr.ReloadCertificates()
 }

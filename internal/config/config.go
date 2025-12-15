@@ -7,6 +7,47 @@ import (
 	"strconv"
 )
 
+// TLSConfig holds TLS-specific configuration
+type TLSConfig struct {
+	// Enabled enables TLS/SIPS support
+	Enabled bool
+
+	// Port for SIPS (default: 5061)
+	Port int
+
+	// WSSPort for WebSocket Secure (default: 5081)
+	WSSPort int
+
+	// CertMode: "manual" | "acme"
+	CertMode string
+
+	// Manual certificate paths (when CertMode = "manual")
+	CertFile string
+	KeyFile  string
+	CAFile   string // Optional CA certificate for client verification
+
+	// ACME/Let's Encrypt settings (when CertMode = "acme")
+	ACMEEmail   string
+	ACMEDomain  string   // Primary domain for certificate
+	ACMEDomains []string // Additional SANs
+	ACMECA      string   // "production" | "staging"
+
+	// Cloudflare DNS challenge settings
+	CloudflareAPIToken string
+
+	// Client certificate verification
+	ClientAuth string // "none" | "request" | "require"
+
+	// Minimum TLS version: "1.2" | "1.3"
+	MinVersion string
+}
+
+// SRTPConfig holds SRTP-specific configuration (optional)
+type SRTPConfig struct {
+	Enabled bool
+	Profile string // "AES_CM_128_HMAC_SHA1_80" | "AEAD_AES_128_GCM"
+}
+
 // Config holds the runtime configuration for GoSIP
 type Config struct {
 	// Server settings
@@ -37,6 +78,12 @@ type Config struct {
 	// Feature flags
 	RecordingEnabled bool
 	DebugMode        bool
+
+	// TLS configuration
+	TLS *TLSConfig
+
+	// SRTP configuration (optional)
+	SRTP *SRTPConfig
 }
 
 // Load creates a Config from environment variables with defaults
@@ -67,7 +114,40 @@ func Load() *Config {
 		DebugMode:        getEnvBool("GOSIP_DEBUG", false),
 	}
 
+	// Load TLS configuration
+	cfg.TLS = loadTLSConfig()
+
+	// Load SRTP configuration
+	cfg.SRTP = loadSRTPConfig()
+
 	return cfg
+}
+
+// loadTLSConfig loads TLS configuration from environment variables
+func loadTLSConfig() *TLSConfig {
+	return &TLSConfig{
+		Enabled:            getEnvBool("GOSIP_TLS_ENABLED", false),
+		Port:               getEnvInt("GOSIP_TLS_PORT", DefaultTLSPort),
+		WSSPort:            getEnvInt("GOSIP_TLS_WSS_PORT", DefaultWSSPort),
+		CertMode:           getEnv("GOSIP_TLS_CERT_MODE", DefaultCertMode),
+		CertFile:           getEnv("GOSIP_TLS_CERT_FILE", ""),
+		KeyFile:            getEnv("GOSIP_TLS_KEY_FILE", ""),
+		CAFile:             getEnv("GOSIP_TLS_CA_FILE", ""),
+		ACMEEmail:          getEnv("GOSIP_ACME_EMAIL", ""),
+		ACMEDomain:         getEnv("GOSIP_ACME_DOMAIN", ""),
+		ACMECA:             getEnv("GOSIP_ACME_CA", DefaultACMECA),
+		CloudflareAPIToken: getEnv("CLOUDFLARE_DNS_API_TOKEN", ""),
+		ClientAuth:         getEnv("GOSIP_TLS_CLIENT_AUTH", "none"),
+		MinVersion:         getEnv("GOSIP_TLS_MIN_VERSION", DefaultTLSMinVersion),
+	}
+}
+
+// loadSRTPConfig loads SRTP configuration from environment variables
+func loadSRTPConfig() *SRTPConfig {
+	return &SRTPConfig{
+		Enabled: getEnvBool("GOSIP_SRTP_ENABLED", false),
+		Profile: getEnv("GOSIP_SRTP_PROFILE", DefaultSRTPProfile),
+	}
 }
 
 // DBPath returns the full path to the SQLite database file
@@ -90,6 +170,11 @@ func (c *Config) BackupsPath() string {
 	return filepath.Join(c.DataDir, BackupsDir)
 }
 
+// CertsPath returns the path to the certificates directory
+func (c *Config) CertsPath() string {
+	return filepath.Join(c.DataDir, CertsDir)
+}
+
 // EnsureDirectories creates all required data directories
 func (c *Config) EnsureDirectories() error {
 	dirs := []string{
@@ -97,6 +182,7 @@ func (c *Config) EnsureDirectories() error {
 		c.RecordingsPath(),
 		c.VoicemailsPath(),
 		c.BackupsPath(),
+		c.CertsPath(),
 	}
 
 	for _, dir := range dirs {

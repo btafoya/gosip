@@ -142,6 +142,34 @@ const (
 	ConfigKeyDNDEnd             = "dnd.end_time"
 	ConfigKeySpamFilterEnabled  = "spam_filter.enabled"
 	ConfigKeySpamScoreThreshold = "spam_filter.threshold"
+
+	// TLS configuration keys
+	ConfigKeyTLSEnabled    = "tls.enabled"
+	ConfigKeyTLSPort       = "tls.port"
+	ConfigKeyTLSWSSPort    = "tls.wss_port"
+	ConfigKeyTLSCertMode   = "tls.cert_mode"
+	ConfigKeyTLSCertFile   = "tls.cert_file"
+	ConfigKeyTLSKeyFile    = "tls.key_file"
+	ConfigKeyTLSCAFile     = "tls.ca_file"
+	ConfigKeyTLSMinVersion = "tls.min_version"
+	ConfigKeyTLSClientAuth = "tls.client_auth"
+	ConfigKeyTLSCertExpiry = "tls.cert_expiry"
+	ConfigKeyTLSCertIssuer = "tls.cert_issuer"
+	ConfigKeyTLSLastRenewal = "tls.last_renewal"
+	ConfigKeyTLSNextRenewal = "tls.next_renewal"
+
+	// ACME configuration keys
+	ConfigKeyACMEEmail   = "acme.email"
+	ConfigKeyACMEDomain  = "acme.domain"
+	ConfigKeyACMEDomains = "acme.domains"
+	ConfigKeyACMECA      = "acme.ca"
+
+	// Cloudflare configuration keys
+	ConfigKeyCloudflareAPIToken = "cloudflare.api_token"
+
+	// SRTP configuration keys
+	ConfigKeySRTPEnabled = "srtp.enabled"
+	ConfigKeySRTPProfile = "srtp.profile"
 )
 
 // IsSetupComplete checks if the initial setup has been completed

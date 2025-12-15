@@ -60,4 +60,19 @@ const (
 	RecordingsDir     = "recordings"
 	VoicemailsDir     = "voicemails"
 	BackupsDir        = "backups"
+	CertsDir          = "certs"
+)
+
+// TLS defaults
+const (
+	DefaultTLSPort     = 5061  // SIPS default port
+	DefaultWSSPort     = 5081  // WebSocket Secure default port
+	DefaultTLSMinVersion = "1.2"
+	DefaultACMECA      = "staging" // "staging" or "production"
+	DefaultCertMode    = "acme"    // "acme" or "manual"
+)
+
+// SRTP defaults
+const (
+	DefaultSRTPProfile = "AES_CM_128_HMAC_SHA1_80"
 )

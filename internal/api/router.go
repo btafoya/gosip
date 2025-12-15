@@ -43,6 +43,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 	provisioningHandler := NewProvisioningHandler(deps)
 	callHandler := NewCallHandler(deps)
 	mwiHandler := NewMWIHandler(deps)
+	tlsHandler := NewTLSHandler(deps)
 
 	// Health endpoints
 	healthHandler := NewHealthHandler("0.1.0")
@@ -220,6 +221,21 @@ func NewRouter(deps *Dependencies) chi.Router {
 					r.Post("/backup", systemHandler.CreateBackup)
 					r.Post("/restore", systemHandler.RestoreBackup)
 					r.Get("/status", systemHandler.GetStatus)
+
+					// TLS/Encryption configuration
+					r.Route("/tls", func(r chi.Router) {
+						r.Get("/status", tlsHandler.GetStatus)
+						r.Put("/config", tlsHandler.UpdateConfig)
+						r.Post("/renew", tlsHandler.ForceRenewal)
+						r.Post("/reload", tlsHandler.ReloadCertificates)
+						r.Get("/certificate", tlsHandler.GetCertificateInfo)
+					})
+
+					// SRTP configuration
+					r.Route("/srtp", func(r chi.Router) {
+						r.Get("/status", tlsHandler.GetSRTPStatus)
+						r.Put("/config", tlsHandler.UpdateSRTPConfig)
+					})
 				})
 
 				// DND toggle
