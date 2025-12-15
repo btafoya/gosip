@@ -272,16 +272,16 @@ func (h *MessageHandler) GetConversation(w http.ResponseWriter, r *http.Request)
 
 // GetConversations returns a list of conversation summaries
 func (h *MessageHandler) GetConversations(w http.ResponseWriter, r *http.Request) {
-	didIDStr := r.URL.Query().Get("did_id")
-	if didIDStr == "" {
-		WriteValidationError(w, "did_id query parameter is required", nil)
-		return
-	}
+	var didID *int64
 
-	didID, err := strconv.ParseInt(didIDStr, 10, 64)
-	if err != nil {
-		WriteValidationError(w, "Invalid did_id", nil)
-		return
+	didIDStr := r.URL.Query().Get("did_id")
+	if didIDStr != "" {
+		id, err := strconv.ParseInt(didIDStr, 10, 64)
+		if err != nil {
+			WriteValidationError(w, "Invalid did_id", nil)
+			return
+		}
+		didID = &id
 	}
 
 	conversations, err := h.deps.DB.Messages.GetConversationSummaries(r.Context(), didID)

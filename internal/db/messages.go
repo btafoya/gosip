@@ -476,18 +476,35 @@ func (r *MessageRepository) GetStats(ctx context.Context) (map[string]interface{
 }
 
 // GetConversationSummaries returns a summary of conversations (latest message per conversation)
-func (r *MessageRepository) GetConversationSummaries(ctx context.Context, didID int64) ([]map[string]interface{}, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT
-			CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END as phone_number,
-			MAX(created_at) as last_message_at,
-			COUNT(*) as message_count,
-			SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) as unread_count
-		FROM messages
-		WHERE did_id = ?
-		GROUP BY CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END
-		ORDER BY last_message_at DESC
-	`, didID)
+// If didID is nil, returns conversations across all DIDs
+func (r *MessageRepository) GetConversationSummaries(ctx context.Context, didID *int64) ([]map[string]interface{}, error) {
+	var rows *sql.Rows
+	var err error
+
+	if didID != nil {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT
+				CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END as phone_number,
+				MAX(created_at) as last_message_at,
+				COUNT(*) as message_count,
+				SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) as unread_count
+			FROM messages
+			WHERE did_id = ?
+			GROUP BY CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END
+			ORDER BY last_message_at DESC
+		`, *didID)
+	} else {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT
+				CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END as phone_number,
+				MAX(created_at) as last_message_at,
+				COUNT(*) as message_count,
+				SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) as unread_count
+			FROM messages
+			GROUP BY CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END
+			ORDER BY last_message_at DESC
+		`)
+	}
 	if err != nil {
 		return nil, err
 	}

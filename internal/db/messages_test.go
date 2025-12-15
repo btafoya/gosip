@@ -483,7 +483,7 @@ func TestMessageRepository_GetConversationSummaries(t *testing.T) {
 		db.Messages.Create(ctx, msg)
 	}
 
-	summaries, err := db.Messages.GetConversationSummaries(ctx, did.ID)
+	summaries, err := db.Messages.GetConversationSummaries(ctx, &did.ID)
 	if err != nil {
 		t.Fatalf("Failed to get summaries: %v", err)
 	}
