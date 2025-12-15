@@ -330,3 +330,572 @@ func (h *TLSHandler) GetCertificateInfo(w http.ResponseWriter, r *http.Request) 
 	status := certMgr.GetStatus()
 	WriteJSON(w, http.StatusOK, sip.CertStatus(status))
 }
+
+// ZRTPStatusResponse represents the ZRTP status API response
+type ZRTPStatusResponse struct {
+	Enabled         bool   `json:"enabled"`
+	Mode            string `json:"mode"`
+	CacheExpiryDays int    `json:"cache_expiry_days"`
+	ActiveSessions  int    `json:"active_sessions"`
+	CachedPeers     int    `json:"cached_peers"`
+}
+
+// GetZRTPStatus returns the current ZRTP configuration and status
+func (h *TLSHandler) GetZRTPStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	enabled := h.deps.DB.Config.GetWithDefault(ctx, "zrtp.enabled", "false") == "true"
+	mode := h.deps.DB.Config.GetWithDefault(ctx, "zrtp.mode", "optional")
+	cacheExpiryStr := h.deps.DB.Config.GetWithDefault(ctx, "zrtp.cache_expiry_days", "90")
+	cacheExpiry, _ := strconv.Atoi(cacheExpiryStr)
+
+	response := ZRTPStatusResponse{
+		Enabled:         enabled,
+		Mode:            mode,
+		CacheExpiryDays: cacheExpiry,
+	}
+
+	// Get live statistics from SIP server if available
+	if h.deps.SIP != nil && h.deps.SIP.IsZRTPEnabled() {
+		stats := h.deps.SIP.GetZRTPStats()
+		if activeSessions, ok := stats["active_sessions"].(int); ok {
+			response.ActiveSessions = activeSessions
+		}
+		if cachedPeers, ok := stats["cached_peers"].(int); ok {
+			response.CachedPeers = cachedPeers
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, response)
+}
+
+// ZRTPConfigRequest represents a request to update ZRTP configuration
+type ZRTPConfigRequest struct {
+	Enabled         *bool  `json:"enabled,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	CacheExpiryDays *int   `json:"cache_expiry_days,omitempty"`
+}
+
+// UpdateZRTPConfig updates ZRTP configuration
+func (h *TLSHandler) UpdateZRTPConfig(w http.ResponseWriter, r *http.Request) {
+	var req ZRTPConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	ctx := r.Context()
+
+	if req.Enabled != nil {
+		value := "false"
+		if *req.Enabled {
+			value = "true"
+		}
+		h.deps.DB.Config.Set(ctx, "zrtp.enabled", value)
+	}
+
+	if req.Mode != "" {
+		if req.Mode != "optional" && req.Mode != "required" && req.Mode != "disabled" {
+			WriteValidationError(w, "Invalid ZRTP mode", []FieldError{
+				{Field: "mode", Message: "Must be 'optional', 'required', or 'disabled'"},
+			})
+			return
+		}
+		h.deps.DB.Config.Set(ctx, "zrtp.mode", req.Mode)
+	}
+
+	if req.CacheExpiryDays != nil {
+		if *req.CacheExpiryDays < 1 || *req.CacheExpiryDays > 365 {
+			WriteValidationError(w, "Invalid cache expiry days", []FieldError{
+				{Field: "cache_expiry_days", Message: "Must be between 1 and 365"},
+			})
+			return
+		}
+		h.deps.DB.Config.Set(ctx, "zrtp.cache_expiry_days", fmt.Sprintf("%d", *req.CacheExpiryDays))
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "ZRTP configuration updated. Restart the server to apply changes.",
+	})
+}
+
+// ZRTPSessionInfo represents information about an active ZRTP session
+type ZRTPSessionInfo struct {
+	CallID    string    `json:"call_id"`
+	State     string    `json:"state"`
+	SAS       string    `json:"sas,omitempty"`
+	IsCached  bool      `json:"is_cached"`
+	StartedAt time.Time `json:"started_at"`
+	SecuredAt time.Time `json:"secured_at,omitempty"`
+}
+
+// GetZRTPSessions returns all active ZRTP sessions
+func (h *TLSHandler) GetZRTPSessions(w http.ResponseWriter, r *http.Request) {
+	if h.deps.SIP == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeInternal, "SIP server not available", nil)
+		return
+	}
+
+	zrtpMgr := h.deps.SIP.GetZRTPManager()
+	if zrtpMgr == nil {
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, "ZRTP is not enabled", nil)
+		return
+	}
+
+	// Get all active sessions from the session manager
+	sessions := h.deps.SIP.GetSessions()
+	if sessions == nil {
+		WriteJSON(w, http.StatusOK, []ZRTPSessionInfo{})
+		return
+	}
+
+	var zrtpSessions []ZRTPSessionInfo
+	for _, callID := range sessions.GetAllCallIDs() {
+		zrtpSession, ok := zrtpMgr.GetSession(callID)
+		if ok && zrtpSession != nil {
+			info := ZRTPSessionInfo{
+				CallID:    callID,
+				State:     string(zrtpSession.State),
+				SAS:       zrtpSession.SAS,
+				IsCached:  zrtpSession.IsCached,
+				StartedAt: zrtpSession.StartedAt,
+				SecuredAt: zrtpSession.SecuredAt,
+			}
+			zrtpSessions = append(zrtpSessions, info)
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, zrtpSessions)
+}
+
+// ZRTPSASRequest represents a request to verify SAS for a call
+type ZRTPSASRequest struct {
+	Verified bool `json:"verified"`
+}
+
+// GetZRTPSAS returns the SAS for a specific call
+func (h *TLSHandler) GetZRTPSAS(w http.ResponseWriter, r *http.Request) {
+	callID := r.URL.Query().Get("call_id")
+	if callID == "" {
+		WriteValidationError(w, "Missing call_id parameter", nil)
+		return
+	}
+
+	if h.deps.SIP == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeInternal, "SIP server not available", nil)
+		return
+	}
+
+	sas, err := h.deps.SIP.GetZRTPSAS(callID)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, ErrCodeNotFound, fmt.Sprintf("ZRTP session not found: %v", err), nil)
+		return
+	}
+
+	isSecured := h.deps.SIP.IsCallZRTPSecured(callID)
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"call_id":   callID,
+		"sas":       sas,
+		"is_secure": isSecured,
+	})
+}
+
+// VerifyZRTPSAS allows manual verification of SAS through the API
+func (h *TLSHandler) VerifyZRTPSAS(w http.ResponseWriter, r *http.Request) {
+	callID := r.URL.Query().Get("call_id")
+	if callID == "" {
+		WriteValidationError(w, "Missing call_id parameter", nil)
+		return
+	}
+
+	var req ZRTPSASRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	if h.deps.SIP == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeInternal, "SIP server not available", nil)
+		return
+	}
+
+	zrtpMgr := h.deps.SIP.GetZRTPManager()
+	if zrtpMgr == nil {
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, "ZRTP is not enabled", nil)
+		return
+	}
+
+	session, ok := zrtpMgr.GetSession(callID)
+	if !ok {
+		WriteError(w, http.StatusNotFound, ErrCodeNotFound, "ZRTP session not found", nil)
+		return
+	}
+
+	if req.Verified {
+		// Mark session as secured
+		session.State = sip.ZRTPStateSecured
+		session.SecuredAt = time.Now()
+		WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"call_id":   callID,
+			"message":   "SAS verified - call is now secured",
+			"is_secure": true,
+		})
+	} else {
+		// Mark as failed - potential MITM
+		session.State = sip.ZRTPStateFailed
+		WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"call_id":   callID,
+			"message":   "SAS verification failed - potential security issue",
+			"is_secure": false,
+			"warning":   "SAS mismatch may indicate a man-in-the-middle attack",
+		})
+	}
+}
+
+// EncryptionStatusResponse represents the comprehensive encryption status
+type EncryptionStatusResponse struct {
+	TLS struct {
+		Enabled             bool      `json:"enabled"`
+		UnencryptedDisabled bool      `json:"unencrypted_disabled"`
+		CertMode            string    `json:"cert_mode,omitempty"`
+		CertValid           bool      `json:"cert_valid,omitempty"`
+		CertExpiry          time.Time `json:"cert_expiry,omitempty"`
+	} `json:"tls"`
+	SRTP struct {
+		Enabled bool   `json:"enabled"`
+		Profile string `json:"profile"`
+	} `json:"srtp"`
+	ZRTP struct {
+		Enabled        bool   `json:"enabled"`
+		Mode           string `json:"mode"`
+		ActiveSessions int    `json:"active_sessions"`
+		CachedPeers    int    `json:"cached_peers"`
+	} `json:"zrtp"`
+	OverallSecurityLevel string `json:"overall_security_level"`
+}
+
+// GetEncryptionStatus returns comprehensive encryption status
+func (h *TLSHandler) GetEncryptionStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var response EncryptionStatusResponse
+
+	// TLS status
+	response.TLS.Enabled = h.deps.DB.Config.GetWithDefault(ctx, db.ConfigKeyTLSEnabled, "false") == "true"
+	response.TLS.UnencryptedDisabled = h.deps.DB.Config.GetWithDefault(ctx, "tls.disable_unencrypted", "false") == "true"
+
+	if h.deps.SIP != nil && h.deps.SIP.IsTLSEnabled() {
+		tlsStatus := h.deps.SIP.GetTLSStatus()
+		if tlsStatus != nil {
+			response.TLS.CertMode = tlsStatus.CertMode
+			response.TLS.CertValid = tlsStatus.Valid
+			response.TLS.CertExpiry = tlsStatus.CertExpiry
+		}
+	}
+
+	// SRTP status
+	response.SRTP.Enabled = h.deps.DB.Config.GetWithDefault(ctx, db.ConfigKeySRTPEnabled, "false") == "true"
+	response.SRTP.Profile = h.deps.DB.Config.GetWithDefault(ctx, db.ConfigKeySRTPProfile, "AES_CM_128_HMAC_SHA1_80")
+
+	// ZRTP status
+	response.ZRTP.Enabled = h.deps.DB.Config.GetWithDefault(ctx, "zrtp.enabled", "false") == "true"
+	response.ZRTP.Mode = h.deps.DB.Config.GetWithDefault(ctx, "zrtp.mode", "optional")
+
+	if h.deps.SIP != nil && h.deps.SIP.IsZRTPEnabled() {
+		stats := h.deps.SIP.GetZRTPStats()
+		if activeSessions, ok := stats["active_sessions"].(int); ok {
+			response.ZRTP.ActiveSessions = activeSessions
+		}
+		if cachedPeers, ok := stats["cached_peers"].(int); ok {
+			response.ZRTP.CachedPeers = cachedPeers
+		}
+	}
+
+	// Calculate overall security level
+	response.OverallSecurityLevel = calculateSecurityLevel(
+		response.TLS.Enabled,
+		response.TLS.UnencryptedDisabled,
+		response.SRTP.Enabled,
+		response.ZRTP.Enabled,
+		response.ZRTP.Mode,
+	)
+
+	WriteJSON(w, http.StatusOK, response)
+}
+
+// calculateSecurityLevel determines the overall security level based on configuration
+func calculateSecurityLevel(tlsEnabled, unencryptedDisabled, srtpEnabled, zrtpEnabled bool, zrtpMode string) string {
+	if !tlsEnabled && !srtpEnabled && !zrtpEnabled {
+		return "none"
+	}
+
+	if tlsEnabled && unencryptedDisabled && srtpEnabled && zrtpEnabled && zrtpMode == "required" {
+		return "maximum"
+	}
+
+	if tlsEnabled && srtpEnabled && zrtpEnabled {
+		return "high"
+	}
+
+	if tlsEnabled && srtpEnabled {
+		return "medium"
+	}
+
+	if tlsEnabled || srtpEnabled {
+		return "basic"
+	}
+
+	return "partial"
+}
+
+// TrunkTLSStatusResponse represents the TLS status of Twilio trunks
+type TrunkTLSStatusResponse struct {
+	Trunks []TrunkTLSInfo `json:"trunks"`
+}
+
+// TrunkTLSInfo represents TLS info for a single trunk
+type TrunkTLSInfo struct {
+	TrunkSID         string                   `json:"trunk_sid"`
+	FriendlyName     string                   `json:"friendly_name"`
+	SecureMode       bool                     `json:"secure_mode"`
+	AllSecure        bool                     `json:"all_secure"`
+	InsecureURLCount int                      `json:"insecure_url_count"`
+	OriginationURLs  []OriginationURLInfo     `json:"origination_urls"`
+}
+
+// OriginationURLInfo represents info about an origination URL
+type OriginationURLInfo struct {
+	SID          string `json:"sid"`
+	SipURL       string `json:"sip_url"`
+	FriendlyName string `json:"friendly_name"`
+	IsSecure     bool   `json:"is_secure"`
+	Enabled      bool   `json:"enabled"`
+}
+
+// GetTrunkTLSStatus returns TLS status for all Twilio trunks
+func (h *TLSHandler) GetTrunkTLSStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeInternal, "Twilio client not available", nil)
+		return
+	}
+
+	trunks, err := h.deps.Twilio.ListSIPTrunks(ctx)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to list SIP trunks: "+err.Error(), nil)
+		return
+	}
+
+	var response TrunkTLSStatusResponse
+	response.Trunks = make([]TrunkTLSInfo, 0, len(trunks))
+
+	for _, trunk := range trunks {
+		status, err := h.deps.Twilio.GetTrunkTLSStatus(ctx, trunk.SID)
+		if err != nil {
+			// Log but continue with other trunks
+			continue
+		}
+
+		info := TrunkTLSInfo{
+			TrunkSID:         status.TrunkSID,
+			FriendlyName:     status.FriendlyName,
+			SecureMode:       status.SecureMode,
+			AllSecure:        status.AllSecure,
+			InsecureURLCount: status.InsecureURLCount,
+			OriginationURLs:  make([]OriginationURLInfo, 0, len(status.OriginationURLs)),
+		}
+
+		for _, url := range status.OriginationURLs {
+			isSecure := strings.HasPrefix(url.SipURL, "sips:") || strings.Contains(url.SipURL, ":5061")
+			info.OriginationURLs = append(info.OriginationURLs, OriginationURLInfo{
+				SID:          url.SID,
+				SipURL:       url.SipURL,
+				FriendlyName: url.FriendlyName,
+				IsSecure:     isSecure,
+				Enabled:      url.Enabled,
+			})
+		}
+
+		response.Trunks = append(response.Trunks, info)
+	}
+
+	WriteJSON(w, http.StatusOK, response)
+}
+
+// EnableTrunkTLSRequest represents a request to enable TLS on a trunk
+type EnableTrunkTLSRequest struct {
+	TrunkSID           string `json:"trunk_sid"`
+	MigrateOrigination bool   `json:"migrate_origination"`
+}
+
+// EnableTrunkTLS enables TLS on a Twilio trunk
+func (h *TLSHandler) EnableTrunkTLS(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req EnableTrunkTLSRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	if req.TrunkSID == "" {
+		WriteValidationError(w, "trunk_sid is required", nil)
+		return
+	}
+
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeInternal, "Twilio client not available", nil)
+		return
+	}
+
+	if req.MigrateOrigination {
+		// Full migration: enable TLS and update all origination URLs
+		if err := h.deps.Twilio.EnsureTrunkFullySecure(ctx, req.TrunkSID); err != nil {
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to enable TLS: "+err.Error(), nil)
+			return
+		}
+	} else {
+		// Just enable secure mode on trunk
+		if err := h.deps.Twilio.EnableTLSForTrunk(ctx, req.TrunkSID); err != nil {
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to enable TLS: "+err.Error(), nil)
+			return
+		}
+	}
+
+	// Get updated status
+	status, err := h.deps.Twilio.GetTrunkTLSStatus(ctx, req.TrunkSID)
+	if err != nil {
+		WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"message": "TLS enabled successfully",
+		})
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message":      "TLS enabled successfully",
+		"secure_mode":  status.SecureMode,
+		"all_secure":   status.AllSecure,
+		"insecure_urls": status.InsecureURLCount,
+	})
+}
+
+// MigrateOriginationURLsRequest represents a request to migrate origination URLs to TLS
+type MigrateOriginationURLsRequest struct {
+	TrunkSID string `json:"trunk_sid"`
+}
+
+// MigrateTrunkOrigination migrates all origination URLs to TLS
+func (h *TLSHandler) MigrateTrunkOrigination(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req MigrateOriginationURLsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	if req.TrunkSID == "" {
+		WriteValidationError(w, "trunk_sid is required", nil)
+		return
+	}
+
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeInternal, "Twilio client not available", nil)
+		return
+	}
+
+	if err := h.deps.Twilio.MigrateToSecureOrigination(ctx, req.TrunkSID); err != nil {
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to migrate origination URLs: "+err.Error(), nil)
+		return
+	}
+
+	// Get updated status
+	status, err := h.deps.Twilio.GetTrunkTLSStatus(ctx, req.TrunkSID)
+	if err != nil {
+		WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"message": "Origination URLs migrated to TLS",
+		})
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message":      "Origination URLs migrated to TLS",
+		"all_secure":   status.AllSecure,
+		"insecure_urls": status.InsecureURLCount,
+	})
+}
+
+// CreateSecureTrunkRequest represents a request to create a new secure trunk
+type CreateSecureTrunkRequest struct {
+	FriendlyName     string `json:"friendly_name"`
+	OriginationURI   string `json:"origination_uri"`
+	OriginationPriority int `json:"origination_priority"`
+	OriginationWeight   int `json:"origination_weight"`
+}
+
+// CreateSecureTrunk creates a new Twilio SIP trunk with TLS enabled
+func (h *TLSHandler) CreateSecureTrunk(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req CreateSecureTrunkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	if req.FriendlyName == "" {
+		WriteValidationError(w, "friendly_name is required", nil)
+		return
+	}
+
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeInternal, "Twilio client not available", nil)
+		return
+	}
+
+	// Create trunk with secure mode enabled
+	trunk, err := h.deps.Twilio.CreateSIPTrunk(ctx, req.FriendlyName, true)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to create trunk: "+err.Error(), nil)
+		return
+	}
+
+	// Set origination URI if provided
+	if req.OriginationURI != "" {
+		priority := req.OriginationPriority
+		if priority == 0 {
+			priority = 10
+		}
+		weight := req.OriginationWeight
+		if weight == 0 {
+			weight = 100
+		}
+
+		// Use secure origination if URI uses sips: or port 5061
+		if strings.HasPrefix(req.OriginationURI, "sips:") || strings.Contains(req.OriginationURI, ":5061") {
+			err = h.deps.Twilio.SetSecureOriginationURI(ctx, trunk.SID, req.OriginationURI, priority, weight)
+		} else {
+			err = h.deps.Twilio.SetOriginationURI(ctx, trunk.SID, req.OriginationURI, priority, weight)
+		}
+
+		if err != nil {
+			// Trunk was created but origination failed - return partial success
+			WriteJSON(w, http.StatusCreated, map[string]interface{}{
+				"trunk_sid":     trunk.SID,
+				"friendly_name": trunk.FriendlyName,
+				"secure":        trunk.Secure,
+				"warning":       fmt.Sprintf("Trunk created but failed to set origination URI: %v", err),
+			})
+			return
+		}
+	}
+
+	WriteJSON(w, http.StatusCreated, map[string]interface{}{
+		"trunk_sid":     trunk.SID,
+		"friendly_name": trunk.FriendlyName,
+		"secure":        trunk.Secure,
+		"domain_name":   trunk.DomainName,
+	})
+}

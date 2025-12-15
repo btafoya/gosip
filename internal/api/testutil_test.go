@@ -116,6 +116,44 @@ func (m *MockTwilioClient) ListIncomingPhoneNumbers(ctx context.Context) ([]twil
 	return []twilio.IncomingPhoneNumber{}, nil
 }
 
+// SIP Trunk Operations (stubs for interface compliance)
+
+func (m *MockTwilioClient) ListSIPTrunks(ctx context.Context) ([]*twilio.SIPTrunk, error) {
+	return []*twilio.SIPTrunk{}, nil
+}
+
+func (m *MockTwilioClient) CreateSIPTrunk(ctx context.Context, friendlyName string, secure bool) (*twilio.SIPTrunk, error) {
+	return &twilio.SIPTrunk{SID: "TK123456789", FriendlyName: friendlyName, Secure: secure}, nil
+}
+
+func (m *MockTwilioClient) GetTrunkTLSStatus(ctx context.Context, trunkSID string) (*twilio.TrunkTLSStatus, error) {
+	return &twilio.TrunkTLSStatus{TrunkSID: trunkSID, SecureMode: true, AllSecure: true}, nil
+}
+
+func (m *MockTwilioClient) EnableTLSForTrunk(ctx context.Context, trunkSID string) error {
+	return nil
+}
+
+func (m *MockTwilioClient) DisableTLSForTrunk(ctx context.Context, trunkSID string) error {
+	return nil
+}
+
+func (m *MockTwilioClient) MigrateToSecureOrigination(ctx context.Context, trunkSID string) error {
+	return nil
+}
+
+func (m *MockTwilioClient) EnsureTrunkFullySecure(ctx context.Context, trunkSID string) error {
+	return nil
+}
+
+func (m *MockTwilioClient) SetOriginationURI(ctx context.Context, trunkSID, sipURI string, priority, weight int) error {
+	return nil
+}
+
+func (m *MockTwilioClient) SetSecureOriginationURI(ctx context.Context, trunkSID, sipURI string, priority, weight int) error {
+	return nil
+}
+
 // MockNotifier is a mock implementation of Notifier for testing
 type MockNotifier struct {
 	SendVoicemailNotificationFunc func(voicemail *models.Voicemail) error

@@ -38,6 +38,17 @@ type TwilioClient interface {
 	UpdateCredentials(accountSID, authToken string)
 	IsHealthy() bool
 	ListIncomingPhoneNumbers(ctx context.Context) ([]twilio.IncomingPhoneNumber, error)
+
+	// SIP Trunk Operations
+	ListSIPTrunks(ctx context.Context) ([]*twilio.SIPTrunk, error)
+	CreateSIPTrunk(ctx context.Context, friendlyName string, secure bool) (*twilio.SIPTrunk, error)
+	GetTrunkTLSStatus(ctx context.Context, trunkSID string) (*twilio.TrunkTLSStatus, error)
+	EnableTLSForTrunk(ctx context.Context, trunkSID string) error
+	DisableTLSForTrunk(ctx context.Context, trunkSID string) error
+	MigrateToSecureOrigination(ctx context.Context, trunkSID string) error
+	EnsureTrunkFullySecure(ctx context.Context, trunkSID string) error
+	SetOriginationURI(ctx context.Context, trunkSID, sipURI string, priority, weight int) error
+	SetSecureOriginationURI(ctx context.Context, trunkSID, sipURI string, priority, weight int) error
 }
 
 // Notifier interface for sending notifications

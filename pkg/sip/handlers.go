@@ -182,6 +182,20 @@ func (s *Server) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 			s.mohMgr.Stop(callID)
 		}
 
+		// Clean up SRTP context if active
+		if s.srtpMgr != nil {
+			if err := s.srtpMgr.Remove(callID); err != nil {
+				slog.Warn("Failed to cleanup SRTP context", "error", err, "call_id", callID)
+			}
+		}
+
+		// Clean up ZRTP session if active
+		if s.zrtpMgr != nil {
+			if err := s.zrtpMgr.EndSession(callID); err != nil {
+				slog.Warn("Failed to cleanup ZRTP session", "error", err, "call_id", callID)
+			}
+		}
+
 		// Update session state
 		if err := session.SetState(CallStateTerminated); err != nil {
 			slog.Warn("Failed to set terminated state", "error", err, "call_id", callID)

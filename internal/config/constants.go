@@ -65,11 +65,12 @@ const (
 
 // TLS defaults
 const (
-	DefaultTLSPort     = 5061  // SIPS default port
-	DefaultWSSPort     = 5081  // WebSocket Secure default port
-	DefaultTLSMinVersion = "1.2"
-	DefaultACMECA      = "staging" // "staging" or "production"
-	DefaultCertMode    = "acme"    // "acme" or "manual"
+	DefaultTLSPort           = 5061  // SIPS default port
+	DefaultWSSPort           = 5081  // WebSocket Secure default port
+	DefaultTLSMinVersion     = "1.2"
+	DefaultACMECA            = "staging" // "staging" or "production"
+	DefaultCertMode          = "acme"    // "acme" or "manual"
+	DefaultDisableUnencrypted = false    // When true, disable SIP on port 5060 (UDP/TCP)
 )
 
 // SRTP defaults

@@ -236,6 +236,26 @@ func NewRouter(deps *Dependencies) chi.Router {
 						r.Get("/status", tlsHandler.GetSRTPStatus)
 						r.Put("/config", tlsHandler.UpdateSRTPConfig)
 					})
+
+					// ZRTP configuration
+					r.Route("/zrtp", func(r chi.Router) {
+						r.Get("/status", tlsHandler.GetZRTPStatus)
+						r.Put("/config", tlsHandler.UpdateZRTPConfig)
+						r.Get("/sessions", tlsHandler.GetZRTPSessions)
+						r.Get("/sas", tlsHandler.GetZRTPSAS)
+						r.Post("/sas/verify", tlsHandler.VerifyZRTPSAS)
+					})
+
+					// Comprehensive encryption status
+					r.Get("/encryption/status", tlsHandler.GetEncryptionStatus)
+
+					// Twilio trunk TLS management
+					r.Route("/trunks/tls", func(r chi.Router) {
+						r.Get("/status", tlsHandler.GetTrunkTLSStatus)
+						r.Post("/enable", tlsHandler.EnableTrunkTLS)
+						r.Post("/migrate", tlsHandler.MigrateTrunkOrigination)
+						r.Post("/create", tlsHandler.CreateSecureTrunk)
+					})
 				})
 
 				// DND toggle

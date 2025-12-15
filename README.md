@@ -17,7 +17,8 @@ GoSIP connects SIP phones to Twilio's cloud services, providing professional tel
 ## Features
 
 ### Core Telephony
-- **SIP Server** - UDP/TCP on port 5060 with Digest authentication (< 500ms registration)
+- **SIP Server** - UDP/TCP on port 5060 and TLS on port 5061 with Digest authentication (< 500ms registration)
+- **Encrypted Mode** - Option to disable unencrypted traffic (TLS-only mode)
 - **Call Control** - Hold/resume, attended/blind transfer, music on hold
 - **Session Management** - Active call tracking, session state persistence
 - **Message Waiting Indicator (MWI)** - Voicemail notification via SIP SUBSCRIBE/NOTIFY
@@ -65,11 +66,16 @@ GoSIP connects SIP phones to Twilio's cloud services, providing professional tel
 - **Device Provisioning** - QR codes for easy phone setup
 - **Real-Time Updates** - Live call and registration status
 
-### Security
+### Security & Encryption
 - **Authentication** - Admin and user roles
 - **Session Management** - 24-hour sessions with secure tokens
 - **Login Protection** - 5 failed attempts → 15-min lockout
 - **Webhook Validation** - Twilio signature verification
+- **TLS/SIPS** - Encrypted SIP signaling on port 5061
+- **SRTP** - Encrypted media with AES-CM-128/256 and HMAC-SHA1
+- **ZRTP** - End-to-end key exchange with SAS verification
+- **ACME Certificates** - Automatic Let's Encrypt certificate management
+- **Twilio TLS** - Secure trunk connections with sips: scheme
 
 ### Resilience
 - **Auto-Retry** - Exponential backoff for Twilio API calls
@@ -231,6 +237,11 @@ gosip/
 ### Admin Only
 - `/api/users/*` - User management
 - `/api/system/*` - System configuration
+- `/api/system/tls/*` - TLS/encryption configuration
+- `/api/system/srtp/*` - SRTP media encryption settings
+- `/api/system/zrtp/*` - ZRTP key exchange and SAS verification
+- `/api/system/trunks/tls/*` - Twilio trunk TLS management
+- `/api/system/encryption/status` - Comprehensive encryption status
 
 ### Webhooks
 - `POST /api/webhooks/voice/incoming` - Incoming call handler

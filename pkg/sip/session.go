@@ -325,6 +325,20 @@ func (m *SessionManager) GetAll() []*CallSession {
 	return sessions
 }
 
+// GetAllCallIDs returns all call IDs for active sessions
+func (m *SessionManager) GetAllCallIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	callIDs := make([]string, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s.IsActive() {
+			callIDs = append(callIDs, s.CallID)
+		}
+	}
+	return callIDs
+}
+
 // Count returns the number of active sessions
 func (m *SessionManager) Count() int {
 	m.mu.RLock()

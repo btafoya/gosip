@@ -22,6 +22,7 @@ type Config struct {
 	DataDir    string // Data directory for certificates
 	TLS        *config.TLSConfig
 	SRTP       *config.SRTPConfig
+	ZRTP       *config.ZRTPConfig
 }
 
 // Server wraps sipgo server with GoSIP-specific functionality
@@ -36,6 +37,12 @@ type Server struct {
 
 	// TLS/Certificate management
 	certMgr *CertManager
+
+	// SRTP session management
+	srtpMgr *SRTPSessionManager
+
+	// ZRTP session management
+	zrtpMgr *ZRTPManager
 
 	// Call control managers
 	sessions    *SessionManager
@@ -95,6 +102,12 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 		sessions:  sessions,
 		mohMgr:    mohMgr,
 		mwiMgr:    mwiMgr,
+		srtpMgr:   NewSRTPSessionManager(),
+	}
+
+	// Validate TLS configuration
+	if cfg.TLS != nil && cfg.TLS.DisableUnencrypted && !cfg.TLS.Enabled {
+		return nil, fmt.Errorf("cannot disable unencrypted SIP without enabling TLS - set GOSIP_TLS_ENABLED=true")
 	}
 
 	// Initialize TLS certificate manager if TLS is enabled
@@ -107,6 +120,32 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 		slog.Info("TLS certificate manager initialized",
 			"mode", cfg.TLS.CertMode,
 			"port", cfg.TLS.Port,
+			"unencrypted_disabled", cfg.TLS.DisableUnencrypted,
+		)
+	}
+
+	// Log SRTP configuration
+	if cfg.SRTP != nil && cfg.SRTP.Enabled {
+		slog.Info("SRTP media encryption enabled",
+			"profile", cfg.SRTP.Profile,
+		)
+	}
+
+	// Initialize ZRTP manager if enabled
+	if cfg.ZRTP != nil && cfg.ZRTP.Enabled {
+		zrtpCfg := &ZRTPConfig{
+			Enabled:         cfg.ZRTP.Enabled,
+			Mode:            ZRTPMode(cfg.ZRTP.Mode),
+			CacheExpiryDays: cfg.ZRTP.CacheExpiryDays,
+		}
+		zrtpMgr, err := NewZRTPManager(zrtpCfg, slog.Default())
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize ZRTP manager: %w", err)
+		}
+		server.zrtpMgr = zrtpMgr
+		slog.Info("ZRTP end-to-end encryption enabled",
+			"mode", cfg.ZRTP.Mode,
+			"cache_expiry_days", cfg.ZRTP.CacheExpiryDays,
 		)
 	}
 
@@ -148,21 +187,31 @@ func (s *Server) Start(ctx context.Context) error {
 
 	addr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Port)
 
-	// Start UDP listener
-	go func() {
-		slog.Info("Starting SIP UDP listener", "addr", addr)
-		if err := s.srv.ListenAndServe(ctx, "udp", addr); err != nil {
-			slog.Error("SIP UDP listener error", "error", err)
-		}
-	}()
+	// Check if unencrypted SIP should be disabled
+	disableUnencrypted := s.cfg.TLS != nil && s.cfg.TLS.DisableUnencrypted
 
-	// Start TCP listener
-	go func() {
-		slog.Info("Starting SIP TCP listener", "addr", addr)
-		if err := s.srv.ListenAndServe(ctx, "tcp", addr); err != nil {
-			slog.Error("SIP TCP listener error", "error", err)
-		}
-	}()
+	if disableUnencrypted {
+		slog.Warn("Unencrypted SIP disabled - UDP/TCP listeners on port 5060 will NOT start",
+			"tls_only", true,
+			"tls_port", s.cfg.TLS.Port,
+		)
+	} else {
+		// Start UDP listener (unencrypted)
+		go func() {
+			slog.Info("Starting SIP UDP listener", "addr", addr)
+			if err := s.srv.ListenAndServe(ctx, "udp", addr); err != nil {
+				slog.Error("SIP UDP listener error", "error", err)
+			}
+		}()
+
+		// Start TCP listener (unencrypted)
+		go func() {
+			slog.Info("Starting SIP TCP listener", "addr", addr)
+			if err := s.srv.ListenAndServe(ctx, "tcp", addr); err != nil {
+				slog.Error("SIP TCP listener error", "error", err)
+			}
+		}()
+	}
 
 	// Start TLS listener if TLS is enabled
 	if s.certMgr != nil && s.cfg.TLS != nil {
@@ -218,6 +267,13 @@ func (s *Server) Stop() {
 	if s.certMgr != nil {
 		if err := s.certMgr.Close(); err != nil {
 			slog.Error("Failed to close certificate manager", "error", err)
+		}
+	}
+
+	// Close ZRTP manager
+	if s.zrtpMgr != nil {
+		if err := s.zrtpMgr.Close(); err != nil {
+			slog.Error("Failed to close ZRTP manager", "error", err)
 		}
 	}
 
@@ -406,4 +462,159 @@ func (s *Server) ReloadCertificates() error {
 		return fmt.Errorf("TLS not enabled")
 	}
 	return s.certMgr.ReloadCertificates()
+}
+
+// IsSRTPEnabled returns whether SRTP is enabled on the server
+func (s *Server) IsSRTPEnabled() bool {
+	return s.cfg.SRTP != nil && s.cfg.SRTP.Enabled
+}
+
+// GetSRTPProfile returns the configured SRTP profile
+func (s *Server) GetSRTPProfile() SRTPProfile {
+	if s.cfg.SRTP == nil || s.cfg.SRTP.Profile == "" {
+		return SRTPProfileAES128CMHMACSHA180
+	}
+	return SRTPProfile(s.cfg.SRTP.Profile)
+}
+
+// GenerateSRTPMaterial generates new SRTP key material for a call
+func (s *Server) GenerateSRTPMaterial() (*SRTPKeyMaterial, error) {
+	if !s.IsSRTPEnabled() {
+		return nil, fmt.Errorf("SRTP not enabled")
+	}
+	return GenerateKeyMaterial(s.GetSRTPProfile())
+}
+
+// SetupSRTPForCall sets up SRTP context for a call
+func (s *Server) SetupSRTPForCall(callID string, material *SRTPKeyMaterial) (*SRTPContext, error) {
+	return s.srtpMgr.GetOrCreate(callID, material)
+}
+
+// GetSRTPForCall retrieves the SRTP context for a call
+func (s *Server) GetSRTPForCall(callID string) (*SRTPContext, bool) {
+	return s.srtpMgr.Get(callID)
+}
+
+// CleanupSRTPForCall removes SRTP context when call ends
+func (s *Server) CleanupSRTPForCall(callID string) error {
+	return s.srtpMgr.Remove(callID)
+}
+
+// GetSRTPManager returns the SRTP session manager for external access
+func (s *Server) GetSRTPManager() *SRTPSessionManager {
+	return s.srtpMgr
+}
+
+// IsZRTPEnabled returns whether ZRTP is enabled on the server
+func (s *Server) IsZRTPEnabled() bool {
+	return s.zrtpMgr != nil && s.cfg.ZRTP != nil && s.cfg.ZRTP.Enabled
+}
+
+// GetZRTPMode returns the configured ZRTP mode
+func (s *Server) GetZRTPMode() string {
+	if s.cfg.ZRTP == nil {
+		return "disabled"
+	}
+	return s.cfg.ZRTP.Mode
+}
+
+// GetZRTPManager returns the ZRTP manager for external access
+func (s *Server) GetZRTPManager() *ZRTPManager {
+	return s.zrtpMgr
+}
+
+// StartZRTPSession initiates a ZRTP session for a call
+func (s *Server) StartZRTPSession(callID string) (*ZRTPSession, error) {
+	if s.zrtpMgr == nil {
+		return nil, fmt.Errorf("ZRTP not enabled")
+	}
+	return s.zrtpMgr.StartSession(callID)
+}
+
+// GetZRTPSession retrieves the ZRTP session for a call
+func (s *Server) GetZRTPSession(callID string) (*ZRTPSession, bool) {
+	if s.zrtpMgr == nil {
+		return nil, false
+	}
+	return s.zrtpMgr.GetSession(callID)
+}
+
+// EndZRTPSession terminates a ZRTP session for a call
+func (s *Server) EndZRTPSession(callID string) error {
+	if s.zrtpMgr == nil {
+		return nil
+	}
+	return s.zrtpMgr.EndSession(callID)
+}
+
+// GetZRTPSAS returns the Short Authentication String for a call
+func (s *Server) GetZRTPSAS(callID string) (string, error) {
+	if s.zrtpMgr == nil {
+		return "", fmt.Errorf("ZRTP not enabled")
+	}
+	return s.zrtpMgr.GetSAS(callID)
+}
+
+// IsCallZRTPSecured returns whether a call has completed ZRTP verification
+func (s *Server) IsCallZRTPSecured(callID string) bool {
+	if s.zrtpMgr == nil {
+		return false
+	}
+	return s.zrtpMgr.IsSecured(callID)
+}
+
+// DeriveZRTPKeys derives SRTP keys from ZRTP shared secret
+func (s *Server) DeriveZRTPKeys(callID string) (*SRTPKeyMaterial, error) {
+	if s.zrtpMgr == nil {
+		return nil, fmt.Errorf("ZRTP not enabled")
+	}
+	return s.zrtpMgr.DeriveKeys(callID)
+}
+
+// SetZRTPSASCallback sets the callback for SAS verification
+func (s *Server) SetZRTPSASCallback(cb SASVerificationCallback) {
+	if s.zrtpMgr != nil {
+		s.zrtpMgr.SetSASVerificationCallback(cb)
+	}
+}
+
+// SetZRTPEventCallback sets the callback for ZRTP events
+func (s *Server) SetZRTPEventCallback(cb ZRTPEventCallback) {
+	if s.zrtpMgr != nil {
+		s.zrtpMgr.SetEventCallback(cb)
+	}
+}
+
+// GetZRTPStats returns ZRTP statistics
+func (s *Server) GetZRTPStats() map[string]interface{} {
+	if s.zrtpMgr == nil {
+		return map[string]interface{}{
+			"enabled": false,
+		}
+	}
+	return s.zrtpMgr.GetStats()
+}
+
+// GetEncryptionStatus returns a summary of all encryption configurations
+func (s *Server) GetEncryptionStatus() map[string]interface{} {
+	status := map[string]interface{}{
+		"tls": map[string]interface{}{
+			"enabled":              s.IsTLSEnabled(),
+			"unencrypted_disabled": s.cfg.TLS != nil && s.cfg.TLS.DisableUnencrypted,
+		},
+		"srtp": map[string]interface{}{
+			"enabled": s.IsSRTPEnabled(),
+			"profile": s.GetSRTPProfile(),
+		},
+		"zrtp": s.GetZRTPStats(),
+	}
+
+	if s.IsTLSEnabled() {
+		tlsStatus := s.GetTLSStatus()
+		status["tls"].(map[string]interface{})["cert_mode"] = tlsStatus.CertMode
+		status["tls"].(map[string]interface{})["cert_valid"] = tlsStatus.Valid
+		status["tls"].(map[string]interface{})["cert_expires"] = tlsStatus.CertExpiry
+	}
+
+	return status
 }

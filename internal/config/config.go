@@ -12,6 +12,10 @@ type TLSConfig struct {
 	// Enabled enables TLS/SIPS support
 	Enabled bool
 
+	// DisableUnencrypted disables UDP/TCP on port 5060 (requires Enabled=true)
+	// When true, only TLS connections on port 5061 will be accepted
+	DisableUnencrypted bool
+
 	// Port for SIPS (default: 5061)
 	Port int
 
@@ -46,6 +50,16 @@ type TLSConfig struct {
 type SRTPConfig struct {
 	Enabled bool
 	Profile string // "AES_CM_128_HMAC_SHA1_80" | "AEAD_AES_128_GCM"
+}
+
+// ZRTPConfig holds ZRTP-specific configuration for end-to-end encryption
+type ZRTPConfig struct {
+	// Enabled enables ZRTP support
+	Enabled bool
+	// Mode: "optional" | "required"
+	Mode string
+	// CacheExpiryDays is how long cached keys are valid
+	CacheExpiryDays int
 }
 
 // Config holds the runtime configuration for GoSIP
@@ -84,6 +98,9 @@ type Config struct {
 
 	// SRTP configuration (optional)
 	SRTP *SRTPConfig
+
+	// ZRTP configuration (optional, for end-to-end encryption)
+	ZRTP *ZRTPConfig
 }
 
 // Load creates a Config from environment variables with defaults
@@ -120,6 +137,9 @@ func Load() *Config {
 	// Load SRTP configuration
 	cfg.SRTP = loadSRTPConfig()
 
+	// Load ZRTP configuration
+	cfg.ZRTP = loadZRTPConfig()
+
 	return cfg
 }
 
@@ -127,6 +147,7 @@ func Load() *Config {
 func loadTLSConfig() *TLSConfig {
 	return &TLSConfig{
 		Enabled:            getEnvBool("GOSIP_TLS_ENABLED", false),
+		DisableUnencrypted: getEnvBool("GOSIP_TLS_DISABLE_UNENCRYPTED", DefaultDisableUnencrypted),
 		Port:               getEnvInt("GOSIP_TLS_PORT", DefaultTLSPort),
 		WSSPort:            getEnvInt("GOSIP_TLS_WSS_PORT", DefaultWSSPort),
 		CertMode:           getEnv("GOSIP_TLS_CERT_MODE", DefaultCertMode),
@@ -147,6 +168,15 @@ func loadSRTPConfig() *SRTPConfig {
 	return &SRTPConfig{
 		Enabled: getEnvBool("GOSIP_SRTP_ENABLED", false),
 		Profile: getEnv("GOSIP_SRTP_PROFILE", DefaultSRTPProfile),
+	}
+}
+
+// loadZRTPConfig loads ZRTP configuration from environment variables
+func loadZRTPConfig() *ZRTPConfig {
+	return &ZRTPConfig{
+		Enabled:         getEnvBool("GOSIP_ZRTP_ENABLED", false),
+		Mode:            getEnv("GOSIP_ZRTP_MODE", "optional"),
+		CacheExpiryDays: getEnvInt("GOSIP_ZRTP_CACHE_EXPIRY_DAYS", 90),
 	}
 }
 

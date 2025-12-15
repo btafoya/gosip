@@ -419,3 +419,78 @@ func IsValidSRTPProfile(profile string) bool {
 	}
 	return false
 }
+
+// AddCryptoToSDP adds SRTP crypto attributes to an SDP body
+// This modifies the media line from RTP/AVP to RTP/SAVP and adds a=crypto line
+func AddCryptoToSDP(sdp []byte, material *SRTPKeyMaterial) ([]byte, error) {
+	if material == nil {
+		return nil, fmt.Errorf("key material required")
+	}
+
+	sdpStr := string(sdp)
+
+	// Convert RTP/AVP to RTP/SAVP for SRTP
+	sdpStr = strings.Replace(sdpStr, " RTP/AVP ", " RTP/SAVP ", -1)
+
+	// Generate crypto attribute
+	cryptoAttr := material.ToSDPCryptoAttribute(1)
+	cryptoLine := cryptoAttr.String()
+
+	// Add crypto line after the first m= line
+	lines := strings.Split(sdpStr, "\r\n")
+	var result []string
+	mediaFound := false
+
+	for _, line := range lines {
+		result = append(result, line)
+		if strings.HasPrefix(line, "m=audio") && !mediaFound {
+			// Add crypto line after the media line
+			result = append(result, cryptoLine)
+			mediaFound = true
+		}
+	}
+
+	// Ensure proper CRLF line endings
+	return []byte(strings.Join(result, "\r\n")), nil
+}
+
+// ExtractCryptoFromSDP extracts SRTP key material from an SDP body
+func ExtractCryptoFromSDP(sdp []byte) (*SRTPKeyMaterial, error) {
+	lines := strings.Split(string(sdp), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		line = strings.TrimSuffix(line, "\r")
+
+		if strings.HasPrefix(line, "a=crypto:") {
+			attr, err := ParseSDPCryptoAttribute(line)
+			if err != nil {
+				continue // Try next crypto line
+			}
+
+			material, err := attr.ExtractKeyMaterial()
+			if err != nil {
+				continue
+			}
+
+			return material, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no valid crypto attribute found in SDP")
+}
+
+// HasCryptoInSDP checks if SDP contains crypto attributes
+func HasCryptoInSDP(sdp []byte) bool {
+	return strings.Contains(string(sdp), "a=crypto:")
+}
+
+// IsSAVP checks if SDP uses SAVP (secure) profile
+func IsSAVP(sdp []byte) bool {
+	return strings.Contains(string(sdp), "RTP/SAVP")
+}
+
+// RequiresSRTP checks if the SDP requires SRTP encryption
+func RequiresSRTP(sdp []byte) bool {
+	return IsSAVP(sdp) || HasCryptoInSDP(sdp)
+}
