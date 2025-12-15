@@ -76,3 +76,5 @@ secrets/
 # Local config
 config.local.yaml
 config.local.json
+
+.serena/
