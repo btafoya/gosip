@@ -41,6 +41,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 	systemHandler := NewSystemHandler(deps)
 	webhookHandler := NewWebhookHandler(deps)
 	provisioningHandler := NewProvisioningHandler(deps)
+	callHandler := NewCallHandler(deps)
 
 	// Health endpoints
 	healthHandler := NewHealthHandler("0.1.0")
@@ -137,6 +138,18 @@ func NewRouter(deps *Dependencies) chi.Router {
 				r.Get("/", cdrHandler.List)
 				r.Get("/stats", cdrHandler.GetStats)
 				r.Get("/{id}", cdrHandler.Get)
+			})
+
+			// Active Calls (Call Control)
+			r.Route("/calls", func(r chi.Router) {
+				r.Get("/", callHandler.ListActiveCalls)
+				r.Get("/moh", callHandler.GetMOHStatus)
+				r.Put("/moh", callHandler.UpdateMOH)
+				r.Get("/{callID}", callHandler.GetCall)
+				r.Post("/{callID}/hold", callHandler.HoldCall)
+				r.Post("/{callID}/transfer", callHandler.TransferCall)
+				r.Delete("/{callID}/transfer", callHandler.CancelTransferCall)
+				r.Delete("/{callID}", callHandler.HangupCall)
 			})
 
 			// Voicemails

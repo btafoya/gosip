@@ -52,6 +52,11 @@ const router = createRouter({
           component: () => import('@/views/CallsView.vue')
         },
         {
+          path: 'call-control',
+          name: 'call-control',
+          component: () => import('@/views/CallControlView.vue')
+        },
+        {
           path: 'messages',
           name: 'messages',
           component: () => import('@/views/MessagesView.vue')

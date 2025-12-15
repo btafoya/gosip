@@ -3,6 +3,7 @@ import { RouterView, RouterLink, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
   Phone,
+  PhoneCall,
   MessageSquare,
   Voicemail,
   Settings,
@@ -27,6 +28,7 @@ const navigation = [
   { name: 'Provisioning', href: '/provisioning', icon: Smartphone },
   { name: 'Phone Numbers', href: '/dids', icon: Phone },
   { name: 'Call Routing', href: '/routes', icon: Route },
+  { name: 'Call Control', href: '/call-control', icon: PhoneCall },
   { name: 'Call History', href: '/calls', icon: Phone },
   { name: 'Messages', href: '/messages', icon: MessageSquare },
   { name: 'Voicemails', href: '/voicemails', icon: Voicemail },
