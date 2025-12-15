@@ -6,6 +6,7 @@ import { Monitor, Plus, Edit2, Trash2, Phone, PhoneOff, RefreshCw } from 'lucide
 const devices = ref<Device[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
+const modalError = ref<string | null>(null)
 const showModal = ref(false)
 const editingDevice = ref<Device | null>(null)
 const saving = ref(false)
@@ -14,8 +15,16 @@ const form = ref({
   name: '',
   extension: '',
   password: '',
-  caller_id: ''
+  caller_id: '',
+  device_type: 'softphone' as 'grandstream' | 'softphone' | 'webrtc' | 'linphone'
 })
+
+const deviceTypes = [
+  { value: 'softphone', label: 'Generic Softphone', description: 'Zoiper, Onesip, etc.' },
+  { value: 'linphone', label: 'Linphone', description: 'iOS, Android, Desktop' },
+  { value: 'grandstream', label: 'Grandstream', description: 'GXP series desk phones' },
+  { value: 'webrtc', label: 'WebRTC', description: 'Browser-based calling' }
+]
 
 onMounted(async () => {
   await loadDevices()
@@ -37,36 +46,49 @@ async function loadDevices() {
 
 function openCreateModal() {
   editingDevice.value = null
-  form.value = { name: '', extension: '', password: '', caller_id: '' }
+  modalError.value = null
+  form.value = { name: '', extension: '', password: '', caller_id: '', device_type: 'softphone' }
   showModal.value = true
 }
 
 function openEditModal(device: Device) {
   editingDevice.value = device
+  modalError.value = null
   form.value = {
     name: device.name,
     extension: device.extension,
     password: '',
-    caller_id: device.caller_id || ''
+    caller_id: device.caller_id || '',
+    device_type: device.device_type || 'softphone'
   }
   showModal.value = true
 }
 
 async function handleSubmit() {
   saving.value = true
-  error.value = null
+  modalError.value = null
 
   try {
     if (editingDevice.value) {
-      await devicesApi.update(editingDevice.value.id, form.value)
+      await devicesApi.update(editingDevice.value.id, {
+        name: form.value.name,
+        password: form.value.password || undefined,
+        device_type: form.value.device_type
+      })
     } else {
-      await devicesApi.create(form.value)
+      await devicesApi.create({
+        name: form.value.name,
+        username: form.value.extension, // Extension is used as SIP username
+        password: form.value.password,
+        device_type: form.value.device_type,
+        recording_enabled: false
+      })
     }
     showModal.value = false
     await loadDevices()
   } catch (err: unknown) {
     const apiError = err as { response?: { data?: { error?: { message?: string } } } }
-    error.value = apiError.response?.data?.error?.message || 'Operation failed'
+    modalError.value = apiError.response?.data?.error?.message || 'Operation failed'
   } finally {
     saving.value = false
   }
@@ -126,6 +148,9 @@ const registeredCount = computed(() => devices.value.filter(d => d.registered).l
               Device
             </th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              Type
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
               Extension
             </th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
@@ -149,6 +174,21 @@ const registeredCount = computed(() => devices.value.filter(d => d.registered).l
                   <div v-if="device.caller_id" class="text-sm text-gray-500">{{ device.caller_id }}</div>
                 </div>
               </div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <span
+                :class="[
+                  'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                  device.device_type === 'linphone' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                  device.device_type === 'grandstream' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
+                  device.device_type === 'webrtc' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' :
+                  'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-200'
+                ]"
+              >
+                {{ device.device_type === 'linphone' ? 'Linphone' :
+                   device.device_type === 'grandstream' ? 'Grandstream' :
+                   device.device_type === 'webrtc' ? 'WebRTC' : 'Softphone' }}
+              </span>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
               {{ device.extension }}
@@ -185,7 +225,7 @@ const registeredCount = computed(() => devices.value.filter(d => d.registered).l
             </td>
           </tr>
           <tr v-if="devices.length === 0">
-            <td colspan="5" class="px-6 py-12 text-center text-gray-500">
+            <td colspan="6" class="px-6 py-12 text-center text-gray-500">
               No devices configured. Click "Add Device" to create one.
             </td>
           </tr>
@@ -203,6 +243,10 @@ const registeredCount = computed(() => devices.value.filter(d => d.registered).l
             {{ editingDevice ? 'Edit Device' : 'Add Device' }}
           </h3>
 
+          <div v-if="modalError" class="mb-4 bg-destructive/10 text-destructive px-4 py-3 rounded-md text-sm">
+            {{ modalError }}
+          </div>
+
           <form @submit.prevent="handleSubmit" class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -215,6 +259,23 @@ const registeredCount = computed(() => devices.value.filter(d => d.registered).l
                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
                 placeholder="Living Room Phone"
               />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Device Type
+              </label>
+              <select
+                v-model="form.device_type"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
+              >
+                <option v-for="type in deviceTypes" :key="type.value" :value="type.value">
+                  {{ type.label }} - {{ type.description }}
+                </option>
+              </select>
+              <p class="mt-1 text-xs text-gray-500">
+                Choose your device type for proper provisioning support
+              </p>
             </div>
 
             <div>

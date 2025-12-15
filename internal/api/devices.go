@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/btafoya/gosip/internal/config"
 	"github.com/btafoya/gosip/internal/db"
@@ -103,7 +104,8 @@ func (h *DeviceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.DeviceType == "" {
 		req.DeviceType = "softphone"
 	}
-	if req.DeviceType != "grandstream" && req.DeviceType != "softphone" && req.DeviceType != "webrtc" {
+	validTypes := map[string]bool{"grandstream": true, "softphone": true, "webrtc": true, "linphone": true}
+	if !validTypes[req.DeviceType] {
 		errors = append(errors, FieldError{Field: "device_type", Message: "Invalid device type"})
 	}
 
@@ -125,7 +127,15 @@ func (h *DeviceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.deps.DB.Devices.Create(r.Context(), device); err != nil {
-		WriteError(w, http.StatusConflict, ErrCodeConflict, "Device with this username already exists", nil)
+		errMsg := err.Error()
+		// Check for specific SQLite constraint errors
+		if strings.Contains(errMsg, "UNIQUE constraint failed") {
+			WriteError(w, http.StatusConflict, ErrCodeConflict, "Device with this username already exists", nil)
+		} else if strings.Contains(errMsg, "CHECK constraint failed") {
+			WriteError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid device type", nil)
+		} else {
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to create device: "+errMsg, nil)
+		}
 		return
 	}
 

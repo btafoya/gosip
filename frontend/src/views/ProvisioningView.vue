@@ -17,7 +17,8 @@ import {
   Plus,
   ChevronRight,
   Settings2,
-  FileText
+  FileText,
+  QrCode
 } from 'lucide-vue-next'
 
 // State
@@ -33,7 +34,7 @@ const recentEvents = ref<DeviceEvent[]>([])
 const wizardStep = ref(0)
 const selectedDevice = ref<Device | null>(null)
 const selectedProfile = ref<ProvisioningProfile | null>(null)
-const provisioningResult = ref<{ config_url?: string; token?: string; expires_at?: string; instructions: string } | null>(null)
+const provisioningResult = ref<{ config_url?: string; token?: string; expires_at?: string; instructions: string; qr_code?: string } | null>(null)
 const provisioning = ref(false)
 
 // Token creation
@@ -45,6 +46,11 @@ const tokenForm = ref({
   allowed_ip: ''
 })
 const creatingToken = ref(false)
+
+// QR Code modal
+const showQRModal = ref(false)
+const qrCodeData = ref<{ qr_code: string; provisioning_url: string; token: string; expires_at: string } | null>(null)
+const loadingQR = ref(false)
 
 // Load data
 onMounted(async () => {
@@ -116,11 +122,21 @@ async function provisionDevice() {
       max_uses: 5
     })
 
+    // Fetch QR code for the token
+    let qrCode = ''
+    try {
+      const qrResult = await provisioningApi.getTokenQRCode(result.token.token)
+      qrCode = qrResult.qr_code
+    } catch (qrErr) {
+      console.error('Failed to fetch QR code:', qrErr)
+    }
+
     // Map result to expected format
     provisioningResult.value = {
       config_url: result.provisioning_url,
       token: result.token.token,
       expires_at: result.token.expires_at,
+      qr_code: qrCode,
       instructions: `Configure your ${selectedProfile.value?.vendor || 'device'} to use the provisioning URL above, or manually configure:\n\nSIP Server: Your GoSIP server\nUsername: ${selectedDevice.value.extension}\nPassword: Your device password`
     }
     wizardStep.value = 3
@@ -183,6 +199,23 @@ async function revokeToken(token: ProvisioningToken) {
     await loadData()
   } catch {
     error.value = 'Failed to revoke token'
+  }
+}
+
+async function showQRCode(token: ProvisioningToken) {
+  loadingQR.value = true
+  qrCodeData.value = null
+  showQRModal.value = true
+
+  try {
+    const data = await provisioningApi.getTokenQRCode(token.token)
+    qrCodeData.value = data
+  } catch (err) {
+    console.error('Failed to load QR code:', err)
+    error.value = 'Failed to generate QR code'
+    showQRModal.value = false
+  } finally {
+    loadingQR.value = false
   }
 }
 
@@ -459,6 +492,13 @@ const activeTokenCount = computed(() =>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <button
+                    @click="showQRCode(token)"
+                    class="text-blue-600 hover:text-blue-500 mr-3"
+                    title="Show QR Code"
+                  >
+                    <QrCode class="h-4 w-4" />
+                  </button>
+                  <button
                     @click="revokeToken(token)"
                     class="text-destructive hover:text-destructive/80"
                     title="Revoke token"
@@ -656,6 +696,20 @@ const activeTokenCount = computed(() =>
               </h3>
             </div>
 
+            <!-- QR Code for Linphone -->
+            <div v-if="provisioningResult?.qr_code" class="mb-4 bg-white dark:bg-gray-700 rounded-lg p-4 text-center">
+              <div class="flex justify-center mb-3">
+                <img
+                  :src="provisioningResult.qr_code"
+                  alt="Provisioning QR Code"
+                  class="w-48 h-48 border border-gray-200 dark:border-gray-600 rounded-lg"
+                />
+              </div>
+              <p class="text-sm text-gray-600 dark:text-gray-300">
+                Scan with Linphone to auto-configure your device
+              </p>
+            </div>
+
             <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 space-y-4">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -787,6 +841,83 @@ const activeTokenCount = computed(() =>
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- QR Code Modal -->
+    <div v-if="showQRModal" class="fixed inset-0 z-50 overflow-y-auto">
+      <div class="flex items-center justify-center min-h-screen px-4">
+        <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="showQRModal = false" />
+
+        <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white">
+              Provisioning QR Code
+            </h3>
+            <button
+              @click="showQRModal = false"
+              class="text-gray-400 hover:text-gray-500"
+            >
+              <XCircle class="h-5 w-5" />
+            </button>
+          </div>
+
+          <div v-if="loadingQR" class="text-center py-8">
+            <RefreshCw class="h-8 w-8 animate-spin mx-auto text-gray-400" />
+            <p class="mt-2 text-sm text-gray-500">Generating QR code...</p>
+          </div>
+
+          <div v-else-if="qrCodeData" class="space-y-4">
+            <div class="flex justify-center">
+              <img
+                :src="qrCodeData.qr_code"
+                alt="Provisioning QR Code"
+                class="w-64 h-64 border border-gray-200 dark:border-gray-600 rounded-lg"
+              />
+            </div>
+
+            <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <h4 class="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">Linphone Setup:</h4>
+              <ol class="text-sm text-blue-700 dark:text-blue-300 space-y-1 list-decimal list-inside">
+                <li>Open Linphone app on your device</li>
+                <li>Go to Settings → Account → Add account</li>
+                <li>Select "Fetch remote configuration"</li>
+                <li>Use the QR scanner or enter URL manually</li>
+              </ol>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Provisioning URL
+              </label>
+              <div class="flex items-center">
+                <code class="flex-1 text-xs bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded border border-gray-200 dark:border-gray-600 overflow-x-auto">
+                  {{ qrCodeData.provisioning_url }}
+                </code>
+                <button
+                  @click="copyToClipboard(qrCodeData.provisioning_url)"
+                  class="ml-2 p-2 text-gray-400 hover:text-gray-600"
+                  title="Copy URL"
+                >
+                  <Copy class="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div class="text-sm text-gray-500">
+              <span class="font-medium">Expires:</span> {{ formatDate(qrCodeData.expires_at) }}
+            </div>
+          </div>
+
+          <div class="flex justify-end mt-6">
+            <button
+              @click="showQRModal = false"
+              class="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

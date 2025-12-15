@@ -121,6 +121,13 @@ export const provisioningApi = {
   revokeToken: (id: number) =>
     del<{ status: string }>(`/provisioning/tokens/${id}`),
 
+  // QR Code for token
+  getTokenQRCode: (token: string, format?: 'base64' | 'png') =>
+    get<{ qr_code: string; provisioning_url: string; token: string; expires_at: string }>(
+      `/provisioning/tokens/${token}/qrcode`,
+      { params: { format: format || 'base64' } }
+    ),
+
   // Events - returns array directly
   getRecentEvents: (params?: { limit?: number; event_type?: string }) =>
     get<DeviceEvent[] | null>('/provisioning/events', { params }),

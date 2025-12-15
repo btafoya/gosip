@@ -104,6 +104,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 				r.Get("/vendors", provisioningHandler.ListVendors)
 				r.Get("/tokens", provisioningHandler.ListTokens)
 				r.Post("/tokens", provisioningHandler.CreateToken)
+				r.Get("/tokens/{token}/qrcode", provisioningHandler.GetTokenQRCode)
 				r.Delete("/tokens/{id}", provisioningHandler.RevokeToken)
 				r.Get("/events", provisioningHandler.GetRecentEvents)
 

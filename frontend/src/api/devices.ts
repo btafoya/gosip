@@ -5,7 +5,7 @@ export interface Device {
   user_id?: number
   name: string
   username: string
-  device_type: 'grandstream' | 'softphone' | 'webrtc'
+  device_type: 'grandstream' | 'softphone' | 'webrtc' | 'linphone'
   recording_enabled: boolean
   created_at: string
   online: boolean

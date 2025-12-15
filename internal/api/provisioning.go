@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"github.com/btafoya/gosip/internal/db"
 	"github.com/btafoya/gosip/internal/models"
 	"github.com/go-chi/chi/v5"
+	qrcode "github.com/yeqown/go-qrcode/v2"
+	"github.com/yeqown/go-qrcode/writer/standard"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -201,8 +204,14 @@ func (h *ProvisioningHandler) GetDeviceConfig(w http.ResponseWriter, r *http.Req
 
 	// Determine content type based on profile vendor
 	contentType := "application/xml"
-	if device.Vendor != nil && *device.Vendor == "grandstream" {
-		contentType = "application/xml"
+	if device.Vendor != nil {
+		switch *device.Vendor {
+		case "grandstream":
+			contentType = "application/xml"
+		case "linphone":
+			// Linphone expects XML with specific content type
+			contentType = "application/xml; charset=utf-8"
+		}
 	}
 
 	w.Header().Set("Content-Type", contentType)
@@ -270,6 +279,39 @@ func (h *ProvisioningHandler) generateConfigInstructions(vendor string, device *
 4. Save and reboot the phone
 
 Or use the provisioning URL to auto-configure.`, sipServer, sipPort, device.Username, device.Username, device.Name)
+
+	case "linphone":
+		return fmt.Sprintf(`Linphone Configuration:
+
+Option 1 - Remote Provisioning (Recommended):
+1. Generate a provisioning URL from the Provisioning page
+2. In Linphone, go to Settings → Advanced → Remote Provisioning
+3. Enter the provisioning URL and tap "Fetch and Apply"
+4. Or scan the QR code with the Linphone app
+
+Option 2 - Manual Configuration:
+1. Open Linphone and go to Settings → Account
+2. Tap "Add account" or "Use SIP account"
+3. Configure:
+   - Username: %s
+   - SIP Domain: %s
+   - Password: [your configured password]
+   - Transport: UDP (or TCP/TLS if available)
+4. Advanced settings:
+   - Display Name: %s
+   - Proxy: sip:%s:%d
+5. Save and register
+
+Option 3 - QR Code:
+1. Generate a provisioning URL with QR code
+2. In Linphone, use the QR code scanner
+3. Configuration will be applied automatically
+
+Features supported:
+- Voice calls (G.711, Opus)
+- Message Waiting Indicator (MWI)
+- Call hold/transfer
+- NAT traversal (STUN/ICE)`, device.Username, sipServer, device.Name, sipServer, sipPort)
 
 	case "softphone":
 		return fmt.Sprintf(`Softphone Configuration:
@@ -482,6 +524,98 @@ func (h *ProvisioningHandler) CreateToken(w http.ResponseWriter, r *http.Request
 	}
 
 	respondJSON(w, http.StatusCreated, response)
+}
+
+// GetTokenQRCode generates a QR code for a provisioning token
+func (h *ProvisioningHandler) GetTokenQRCode(w http.ResponseWriter, r *http.Request) {
+	tokenStr := chi.URLParam(r, "token")
+	if tokenStr == "" {
+		respondError(w, http.StatusBadRequest, "MISSING_TOKEN", "Token is required")
+		return
+	}
+
+	// Validate the token exists and is not expired
+	token, err := h.deps.DB.ProvisioningTokens.GetByToken(r.Context(), tokenStr)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "TOKEN_NOT_FOUND", "Token not found")
+		return
+	}
+
+	if token.ExpiresAt.Before(time.Now()) {
+		respondError(w, http.StatusGone, "TOKEN_EXPIRED", "Token has expired")
+		return
+	}
+
+	if token.RevokedAt != nil {
+		respondError(w, http.StatusForbidden, "TOKEN_REVOKED", "Token has been revoked")
+		return
+	}
+
+	// Build the provisioning URL
+	provisioningURL := fmt.Sprintf("https://%s/provision/%s", h.deps.Config.SIPDomain, tokenStr)
+
+	// Check format param - can be "png" (image) or "base64" (data URL)
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "base64"
+	}
+
+	// Generate QR code
+	qrData, contentType, err := generateQRCode(provisioningURL, format)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "QR_ERROR", "Failed to generate QR code")
+		return
+	}
+
+	if format == "png" {
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"provision-%s.png\"", tokenStr[:8]))
+		w.WriteHeader(http.StatusOK)
+		w.Write(qrData)
+	} else {
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"qr_code":          string(qrData),
+			"provisioning_url": provisioningURL,
+			"token":            tokenStr,
+			"expires_at":       token.ExpiresAt.Format(time.RFC3339),
+		})
+	}
+}
+
+// nopCloser wraps an io.Writer with a no-op Close method
+type nopCloser struct {
+	*bytes.Buffer
+}
+
+func (nopCloser) Close() error { return nil }
+
+// generateQRCode creates a QR code image for the given URL
+func generateQRCode(url string, format string) ([]byte, string, error) {
+	// Create QR code
+	qrc, err := qrcode.New(url)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create QR code: %w", err)
+	}
+
+	// Create a buffer to write the image
+	var buf bytes.Buffer
+
+	// Create writer that writes to buffer (with Close implementation)
+	writer := standard.NewWithWriter(nopCloser{&buf}, standard.WithQRWidth(10))
+
+	// Save QR code to buffer
+	if err := qrc.Save(writer); err != nil {
+		return nil, "", fmt.Errorf("failed to save QR code: %w", err)
+	}
+
+	if format == "png" {
+		return buf.Bytes(), "image/png", nil
+	}
+
+	// Return as base64 data URL
+	base64Data := base64.StdEncoding.EncodeToString(buf.Bytes())
+	dataURL := fmt.Sprintf("data:image/png;base64,%s", base64Data)
+	return []byte(dataURL), "text/plain", nil
 }
 
 // RevokeToken revokes a provisioning token
