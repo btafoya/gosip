@@ -21,10 +21,22 @@ type Dependencies struct {
 
 // TwilioClient interface for Twilio operations
 type TwilioClient interface {
+	// SMS/MMS Operations
 	SendSMS(from, to, body string, mediaURLs []string) (string, error)
+	SendSMSWithCallback(from, to, body string, mediaURLs []string, statusCallback string) (string, error)
+	GetMessage(ctx context.Context, messageSID string) (*twilio.TwilioMessage, error)
+	ListMessages(ctx context.Context, from, to string, limit int) ([]*twilio.TwilioMessage, error)
+	DeleteMessage(ctx context.Context, messageSID string) error
+	CancelMessage(ctx context.Context, messageSID string) error
+	ResendMessage(ctx context.Context, originalSID string) (string, error)
+	GetMediaURLs(ctx context.Context, messageSID string) ([]string, error)
+
+	// Voice Operations
+	RequestTranscription(recordingSID string, voicemailID int64) error
+
+	// Account Operations
 	UpdateCredentials(accountSID, authToken string)
 	IsHealthy() bool
-	RequestTranscription(recordingSID string, voicemailID int64) error
 	ListIncomingPhoneNumbers(ctx context.Context) ([]twilio.IncomingPhoneNumber, error)
 }
 

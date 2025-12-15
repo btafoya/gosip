@@ -20,6 +20,13 @@ import (
 // MockTwilioClient is a mock implementation of TwilioClient for testing
 type MockTwilioClient struct {
 	SendSMSFunc                   func(from, to, body string, mediaURLs []string) (string, error)
+	SendSMSWithCallbackFunc       func(from, to, body string, mediaURLs []string, statusCallback string) (string, error)
+	GetMessageFunc                func(ctx context.Context, messageSID string) (*twilio.TwilioMessage, error)
+	ListMessagesFunc              func(ctx context.Context, from, to string, limit int) ([]*twilio.TwilioMessage, error)
+	DeleteMessageFunc             func(ctx context.Context, messageSID string) error
+	CancelMessageFunc             func(ctx context.Context, messageSID string) error
+	ResendMessageFunc             func(ctx context.Context, originalSID string) (string, error)
+	GetMediaURLsFunc              func(ctx context.Context, messageSID string) ([]string, error)
 	UpdateCredentialsFunc         func(accountSID, authToken string)
 	IsHealthyFunc                 func() bool
 	RequestTranscriptionFunc      func(recordingSID string, voicemailID int64) error
@@ -31,6 +38,55 @@ func (m *MockTwilioClient) SendSMS(from, to, body string, mediaURLs []string) (s
 		return m.SendSMSFunc(from, to, body, mediaURLs)
 	}
 	return "SM123456789", nil
+}
+
+func (m *MockTwilioClient) SendSMSWithCallback(from, to, body string, mediaURLs []string, statusCallback string) (string, error) {
+	if m.SendSMSWithCallbackFunc != nil {
+		return m.SendSMSWithCallbackFunc(from, to, body, mediaURLs, statusCallback)
+	}
+	return "SM123456789", nil
+}
+
+func (m *MockTwilioClient) GetMessage(ctx context.Context, messageSID string) (*twilio.TwilioMessage, error) {
+	if m.GetMessageFunc != nil {
+		return m.GetMessageFunc(ctx, messageSID)
+	}
+	return &twilio.TwilioMessage{SID: messageSID, Status: "delivered"}, nil
+}
+
+func (m *MockTwilioClient) ListMessages(ctx context.Context, from, to string, limit int) ([]*twilio.TwilioMessage, error) {
+	if m.ListMessagesFunc != nil {
+		return m.ListMessagesFunc(ctx, from, to, limit)
+	}
+	return []*twilio.TwilioMessage{}, nil
+}
+
+func (m *MockTwilioClient) DeleteMessage(ctx context.Context, messageSID string) error {
+	if m.DeleteMessageFunc != nil {
+		return m.DeleteMessageFunc(ctx, messageSID)
+	}
+	return nil
+}
+
+func (m *MockTwilioClient) CancelMessage(ctx context.Context, messageSID string) error {
+	if m.CancelMessageFunc != nil {
+		return m.CancelMessageFunc(ctx, messageSID)
+	}
+	return nil
+}
+
+func (m *MockTwilioClient) ResendMessage(ctx context.Context, originalSID string) (string, error) {
+	if m.ResendMessageFunc != nil {
+		return m.ResendMessageFunc(ctx, originalSID)
+	}
+	return "SM987654321", nil
+}
+
+func (m *MockTwilioClient) GetMediaURLs(ctx context.Context, messageSID string) ([]string, error) {
+	if m.GetMediaURLsFunc != nil {
+		return m.GetMediaURLsFunc(ctx, messageSID)
+	}
+	return []string{}, nil
 }
 
 func (m *MockTwilioClient) UpdateCredentials(accountSID, authToken string) {

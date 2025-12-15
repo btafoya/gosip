@@ -491,3 +491,208 @@ func toAutoReplyResponse(rule *models.AutoReply) *AutoReplyResponse {
 		Enabled:     rule.Enabled,
 	}
 }
+
+// Resend attempts to resend a failed message
+func (h *MessageHandler) Resend(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		WriteValidationError(w, "Invalid message ID", nil)
+		return
+	}
+
+	// Get the original message
+	message, err := h.deps.DB.Messages.GetByID(r.Context(), id)
+	if err != nil {
+		if err == db.ErrMessageNotFound {
+			WriteNotFoundError(w, "Message")
+			return
+		}
+		WriteInternalError(w)
+		return
+	}
+
+	// Only allow resending failed or undelivered outbound messages
+	if message.Direction != "outbound" {
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, "Can only resend outbound messages", nil)
+		return
+	}
+
+	if message.Status != "failed" && message.Status != "undelivered" {
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, "Message status must be failed or undelivered", nil)
+		return
+	}
+
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, "Twilio client not available", nil)
+		return
+	}
+
+	// Parse media URLs
+	var mediaURLs []string
+	if len(message.MediaURLs) > 0 {
+		json.Unmarshal(message.MediaURLs, &mediaURLs)
+	}
+
+	// Resend the message
+	twilioSID, sendErr := h.deps.Twilio.SendSMS(message.FromNumber, message.ToNumber, message.Body, mediaURLs)
+	if sendErr != nil {
+		h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "failed")
+		WriteError(w, http.StatusBadGateway, ErrCodeBadGateway, "Failed to resend message: "+sendErr.Error(), nil)
+		return
+	}
+
+	// Update the message record
+	message.MessageSID = twilioSID
+	message.Status = "sent"
+	h.deps.DB.Messages.Update(r.Context(), message)
+
+	WriteJSON(w, http.StatusOK, toMessageResponse(message))
+}
+
+// SyncFromTwilio syncs message status from Twilio
+func (h *MessageHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		WriteValidationError(w, "Invalid message ID", nil)
+		return
+	}
+
+	// Get the local message
+	message, err := h.deps.DB.Messages.GetByID(r.Context(), id)
+	if err != nil {
+		if err == db.ErrMessageNotFound {
+			WriteNotFoundError(w, "Message")
+			return
+		}
+		WriteInternalError(w)
+		return
+	}
+
+	if message.MessageSID == "" {
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, "Message has no Twilio SID", nil)
+		return
+	}
+
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, "Twilio client not available", nil)
+		return
+	}
+
+	// Fetch status from Twilio
+	twilioMsg, err := h.deps.Twilio.GetMessage(r.Context(), message.MessageSID)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, ErrCodeBadGateway, "Failed to fetch from Twilio: "+err.Error(), nil)
+		return
+	}
+
+	// Update local status
+	message.Status = twilioMsg.Status
+	h.deps.DB.Messages.Update(r.Context(), message)
+
+	WriteJSON(w, http.StatusOK, toMessageResponse(message))
+}
+
+// Cancel attempts to cancel a queued message
+func (h *MessageHandler) Cancel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		WriteValidationError(w, "Invalid message ID", nil)
+		return
+	}
+
+	message, err := h.deps.DB.Messages.GetByID(r.Context(), id)
+	if err != nil {
+		if err == db.ErrMessageNotFound {
+			WriteNotFoundError(w, "Message")
+			return
+		}
+		WriteInternalError(w)
+		return
+	}
+
+	if message.Status != "queued" && message.Status != "accepted" {
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, "Can only cancel queued or accepted messages", nil)
+		return
+	}
+
+	if message.MessageSID == "" {
+		// Message never made it to Twilio, just update local status
+		h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "canceled")
+		WriteJSON(w, http.StatusOK, map[string]string{"message": "Message canceled"})
+		return
+	}
+
+	if h.deps.Twilio == nil {
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, "Twilio client not available", nil)
+		return
+	}
+
+	// Try to cancel in Twilio
+	if err := h.deps.Twilio.CancelMessage(r.Context(), message.MessageSID); err != nil {
+		WriteError(w, http.StatusBadGateway, ErrCodeBadGateway, "Failed to cancel in Twilio: "+err.Error(), nil)
+		return
+	}
+
+	h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "canceled")
+	WriteJSON(w, http.StatusOK, map[string]string{"message": "Message canceled"})
+}
+
+// GetUnreadCount returns the count of unread messages
+func (h *MessageHandler) GetUnreadCount(w http.ResponseWriter, r *http.Request) {
+	count, err := h.deps.DB.Messages.CountUnread(r.Context())
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]int{"unread_count": count})
+}
+
+// MarkConversationAsRead marks all messages in a conversation as read
+func (h *MessageHandler) MarkConversationAsRead(w http.ResponseWriter, r *http.Request) {
+	remoteNumber := chi.URLParam(r, "number")
+	if remoteNumber == "" {
+		WriteValidationError(w, "Remote number is required", nil)
+		return
+	}
+
+	didIDStr := r.URL.Query().Get("did_id")
+	if didIDStr == "" {
+		WriteValidationError(w, "did_id query parameter is required", nil)
+		return
+	}
+
+	didID, err := strconv.ParseInt(didIDStr, 10, 64)
+	if err != nil {
+		WriteValidationError(w, "Invalid did_id", nil)
+		return
+	}
+
+	// Mark all messages in the conversation as read
+	if err := h.deps.DB.Messages.MarkConversationAsRead(r.Context(), didID, remoteNumber); err != nil {
+		WriteInternalError(w)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"message": "Conversation marked as read"})
+}
+
+// GetStats returns message statistics
+func (h *MessageHandler) GetStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get total counts
+	total, _ := h.deps.DB.Messages.Count(ctx)
+	unread, _ := h.deps.DB.Messages.CountUnread(ctx)
+	inbound, _ := h.deps.DB.Messages.CountByDirection(ctx, "inbound")
+	outbound, _ := h.deps.DB.Messages.CountByDirection(ctx, "outbound")
+
+	stats := map[string]interface{}{
+		"total":    total,
+		"unread":   unread,
+		"inbound":  inbound,
+		"outbound": outbound,
+	}
+
+	WriteJSON(w, http.StatusOK, stats)
+}

@@ -396,6 +396,85 @@ func (r *MessageRepository) ListByRemoteNumber(ctx context.Context, remoteNumber
 	return msgs, rows.Err()
 }
 
+// MarkConversationAsRead marks all inbound messages in a conversation as read
+func (r *MessageRepository) MarkConversationAsRead(ctx context.Context, didID int64, remoteNumber string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE messages SET is_read = 1
+		WHERE did_id = ? AND direction = 'inbound' AND is_read = 0
+		AND (from_number = ? OR to_number = ?)
+	`, didID, remoteNumber, remoteNumber)
+	return err
+}
+
+// UpdateStatusByMessageSID updates the status of a message by its Twilio Message SID
+func (r *MessageRepository) UpdateStatusByMessageSID(ctx context.Context, messageSID string, status string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE messages SET status = ? WHERE message_sid = ?`, status, messageSID)
+	return err
+}
+
+// GetStats returns message statistics
+func (r *MessageRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {
+	stats := make(map[string]interface{})
+
+	// Total messages
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`).Scan(&total); err != nil {
+		return nil, err
+	}
+	stats["total"] = total
+
+	// Inbound count
+	var inbound int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE direction = 'inbound'`).Scan(&inbound); err != nil {
+		return nil, err
+	}
+	stats["inbound"] = inbound
+
+	// Outbound count
+	var outbound int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE direction = 'outbound'`).Scan(&outbound); err != nil {
+		return nil, err
+	}
+	stats["outbound"] = outbound
+
+	// Unread count
+	var unread int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE is_read = 0 AND direction = 'inbound'`).Scan(&unread); err != nil {
+		return nil, err
+	}
+	stats["unread"] = unread
+
+	// Failed count
+	var failed int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE status IN ('failed', 'undelivered')`).Scan(&failed); err != nil {
+		return nil, err
+	}
+	stats["failed"] = failed
+
+	// Today's messages
+	var today int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE date(created_at) = date('now')`).Scan(&today); err != nil {
+		return nil, err
+	}
+	stats["today"] = today
+
+	// This week's messages
+	var thisWeek int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE created_at >= datetime('now', '-7 days')`).Scan(&thisWeek); err != nil {
+		return nil, err
+	}
+	stats["this_week"] = thisWeek
+
+	// This month's messages
+	var thisMonth int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE created_at >= datetime('now', 'start of month')`).Scan(&thisMonth); err != nil {
+		return nil, err
+	}
+	stats["this_month"] = thisMonth
+
+	return stats, nil
+}
+
 // GetConversationSummaries returns a summary of conversations (latest message per conversation)
 func (r *MessageRepository) GetConversationSummaries(ctx context.Context, didID int64) ([]map[string]interface{}, error) {
 	rows, err := r.db.QueryContext(ctx, `

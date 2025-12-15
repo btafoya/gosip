@@ -173,10 +173,16 @@ func NewRouter(deps *Dependencies) chi.Router {
 			r.Route("/messages", func(r chi.Router) {
 				r.Get("/", messageHandler.List)
 				r.Post("/", messageHandler.Send)
+				r.Get("/stats", messageHandler.GetStats)
+				r.Get("/unread/count", messageHandler.GetUnreadCount)
 				r.Get("/conversations", messageHandler.GetConversations)
 				r.Get("/conversation/{number}", messageHandler.GetConversation)
+				r.Put("/conversation/{number}/read", messageHandler.MarkConversationAsRead)
 				r.Get("/{id}", messageHandler.Get)
 				r.Put("/{id}/read", messageHandler.MarkAsRead)
+				r.Post("/{id}/resend", messageHandler.Resend)
+				r.Post("/{id}/sync", messageHandler.SyncFromTwilio)
+				r.Post("/{id}/cancel", messageHandler.Cancel)
 				r.Delete("/{id}", messageHandler.Delete)
 			})
 

@@ -413,3 +413,305 @@ func (c *Client) healthChecker(ctx context.Context) {
 func (c *Client) Stop() {
 	c.queue.Stop()
 }
+
+// TwilioMessage represents a message from Twilio API
+type TwilioMessage struct {
+	SID          string
+	Body         string
+	From         string
+	To           string
+	Status       string
+	Direction    string
+	DateCreated  time.Time
+	DateSent     *time.Time
+	NumMedia     int
+	NumSegments  int
+	Price        string
+	PriceUnit    string
+	ErrorCode    *int
+	ErrorMessage string
+}
+
+// parseTwilioTime parses a Twilio timestamp string into time.Time
+func parseTwilioTime(s string) time.Time {
+	// Twilio uses RFC 2822 format: "Mon, 02 Jan 2006 15:04:05 +0000"
+	layouts := []string{
+		time.RFC1123Z,
+		time.RFC1123,
+		time.RFC3339,
+		"Mon, 02 Jan 2006 15:04:05 -0700",
+		"2006-01-02T15:04:05Z",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// GetMessage fetches a specific message from Twilio by SID
+func (c *Client) GetMessage(ctx context.Context, messageSID string) (*TwilioMessage, error) {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("twilio client not initialized")
+	}
+	client := c.client
+	c.mu.RUnlock()
+
+	resp, err := client.Api.FetchMessage(messageSID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("twilio API error: %w", err)
+	}
+
+	msg := &TwilioMessage{
+		SID: *resp.Sid,
+	}
+
+	if resp.Body != nil {
+		msg.Body = *resp.Body
+	}
+	if resp.From != nil {
+		msg.From = *resp.From
+	}
+	if resp.To != nil {
+		msg.To = *resp.To
+	}
+	if resp.Status != nil {
+		msg.Status = *resp.Status
+	}
+	if resp.Direction != nil {
+		msg.Direction = *resp.Direction
+	}
+	if resp.DateCreated != nil {
+		msg.DateCreated = parseTwilioTime(*resp.DateCreated)
+	}
+	if resp.DateSent != nil {
+		t := parseTwilioTime(*resp.DateSent)
+		msg.DateSent = &t
+	}
+	if resp.NumMedia != nil {
+		fmt.Sscanf(*resp.NumMedia, "%d", &msg.NumMedia)
+	}
+	if resp.NumSegments != nil {
+		fmt.Sscanf(*resp.NumSegments, "%d", &msg.NumSegments)
+	}
+	if resp.Price != nil {
+		msg.Price = *resp.Price
+	}
+	if resp.PriceUnit != nil {
+		msg.PriceUnit = *resp.PriceUnit
+	}
+	if resp.ErrorCode != nil {
+		msg.ErrorCode = resp.ErrorCode
+	}
+	if resp.ErrorMessage != nil {
+		msg.ErrorMessage = *resp.ErrorMessage
+	}
+
+	return msg, nil
+}
+
+// ListMessages retrieves messages from Twilio with optional filtering
+func (c *Client) ListMessages(ctx context.Context, from, to string, limit int) ([]*TwilioMessage, error) {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("twilio client not initialized")
+	}
+	client := c.client
+	c.mu.RUnlock()
+
+	params := &twilioApi.ListMessageParams{}
+	if from != "" {
+		params.SetFrom(from)
+	}
+	if to != "" {
+		params.SetTo(to)
+	}
+	if limit > 0 {
+		params.SetLimit(limit)
+	}
+
+	resp, err := client.Api.ListMessage(params)
+	if err != nil {
+		return nil, fmt.Errorf("twilio API error: %w", err)
+	}
+
+	var messages []*TwilioMessage
+	for _, r := range resp {
+		msg := &TwilioMessage{}
+		if r.Sid != nil {
+			msg.SID = *r.Sid
+		}
+		if r.Body != nil {
+			msg.Body = *r.Body
+		}
+		if r.From != nil {
+			msg.From = *r.From
+		}
+		if r.To != nil {
+			msg.To = *r.To
+		}
+		if r.Status != nil {
+			msg.Status = *r.Status
+		}
+		if r.Direction != nil {
+			msg.Direction = *r.Direction
+		}
+		if r.DateCreated != nil {
+			msg.DateCreated = parseTwilioTime(*r.DateCreated)
+		}
+		if r.DateSent != nil {
+			t := parseTwilioTime(*r.DateSent)
+			msg.DateSent = &t
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages, nil
+}
+
+// DeleteMessage deletes a message from Twilio by SID
+func (c *Client) DeleteMessage(ctx context.Context, messageSID string) error {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
+		return fmt.Errorf("twilio client not initialized")
+	}
+	client := c.client
+	c.mu.RUnlock()
+
+	err := client.Api.DeleteMessage(messageSID, nil)
+	if err != nil {
+		return fmt.Errorf("twilio API error: %w", err)
+	}
+
+	return nil
+}
+
+// CancelMessage attempts to cancel a queued message that hasn't been sent yet
+func (c *Client) CancelMessage(ctx context.Context, messageSID string) error {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
+		return fmt.Errorf("twilio client not initialized")
+	}
+	client := c.client
+	c.mu.RUnlock()
+
+	params := &twilioApi.UpdateMessageParams{}
+	params.SetStatus("canceled")
+
+	_, err := client.Api.UpdateMessage(messageSID, params)
+	if err != nil {
+		return fmt.Errorf("twilio API error: %w", err)
+	}
+
+	return nil
+}
+
+// SendSMSWithCallback sends an SMS message with a status callback URL
+func (c *Client) SendSMSWithCallback(from, to, body string, mediaURLs []string, statusCallback string) (string, error) {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
+		return "", fmt.Errorf("twilio client not initialized")
+	}
+	c.mu.RUnlock()
+
+	var lastErr error
+	for attempt := 0; attempt < config.TwilioMaxRetries; attempt++ {
+		sid, err := c.sendSMSWithCallbackOnce(from, to, body, mediaURLs, statusCallback)
+		if err == nil {
+			c.recordSuccess()
+			return sid, nil
+		}
+		lastErr = err
+		c.recordFailure()
+
+		// Exponential backoff
+		backoff := time.Duration(1<<uint(attempt)) * time.Second
+		time.Sleep(backoff)
+	}
+
+	return "", fmt.Errorf("failed after %d retries: %w", config.TwilioMaxRetries, lastErr)
+}
+
+func (c *Client) sendSMSWithCallbackOnce(from, to, body string, mediaURLs []string, statusCallback string) (string, error) {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+
+	params := &twilioApi.CreateMessageParams{}
+	params.SetFrom(from)
+	params.SetTo(to)
+	params.SetBody(body)
+
+	if len(mediaURLs) > 0 {
+		params.SetMediaUrl(mediaURLs)
+	}
+
+	if statusCallback != "" {
+		params.SetStatusCallback(statusCallback)
+	}
+
+	resp, err := client.Api.CreateMessage(params)
+	if err != nil {
+		return "", fmt.Errorf("twilio API error: %w", err)
+	}
+
+	if resp.Sid == nil {
+		return "", fmt.Errorf("no SID returned from Twilio")
+	}
+
+	return *resp.Sid, nil
+}
+
+// ResendMessage resends a message (creates a new message with same content)
+func (c *Client) ResendMessage(ctx context.Context, originalSID string) (string, error) {
+	// Fetch the original message
+	original, err := c.GetMessage(ctx, originalSID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch original message: %w", err)
+	}
+
+	// Only resend failed messages
+	if original.Status != "failed" && original.Status != "undelivered" {
+		return "", fmt.Errorf("message status is %s, not failed or undelivered", original.Status)
+	}
+
+	// Resend with same content
+	return c.SendSMS(original.From, original.To, original.Body, nil)
+}
+
+// GetMediaURLs fetches media URLs for a message
+func (c *Client) GetMediaURLs(ctx context.Context, messageSID string) ([]string, error) {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("twilio client not initialized")
+	}
+	client := c.client
+	c.mu.RUnlock()
+
+	params := &twilioApi.ListMediaParams{}
+	resp, err := client.Api.ListMedia(messageSID, params)
+	if err != nil {
+		return nil, fmt.Errorf("twilio API error: %w", err)
+	}
+
+	var urls []string
+	for _, media := range resp {
+		if media.Uri != nil {
+			// Convert relative URI to full URL
+			url := fmt.Sprintf("https://api.twilio.com%s", *media.Uri)
+			// Remove .json extension for actual media URL
+			url = url[:len(url)-5] // Remove ".json"
+			urls = append(urls, url)
+		}
+	}
+
+	return urls, nil
+}

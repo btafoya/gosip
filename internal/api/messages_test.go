@@ -565,3 +565,393 @@ func TestMessageHandler_ValidTriggerTypes(t *testing.T) {
 		})
 	}
 }
+
+// Tests for new message handlers
+
+func TestMessageHandler_GetUnreadCount(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID and messages
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create some messages - inbound messages start as unread
+	msg1 := createTestMessage(t, setup.DB, did.ID, "inbound", "+15559876543", "Unread 1")
+	msg2 := createTestMessage(t, setup.DB, did.ID, "inbound", "+15559876543", "Unread 2")
+	msg3 := createTestMessage(t, setup.DB, did.ID, "outbound", "+15559876543", "Outbound")
+
+	// Mark one as read
+	setup.DB.Messages.MarkAsRead(context.Background(), msg1.ID)
+	_ = msg2
+	_ = msg3
+
+	req := httptest.NewRequest(http.MethodGet, "/api/messages/unread/count", nil)
+	rr := httptest.NewRecorder()
+	handler.GetUnreadCount(rr, req)
+
+	assertStatus(t, rr, http.StatusOK)
+
+	var resp struct {
+		UnreadCount int `json:"unread_count"`
+	}
+	decodeResponse(t, rr, &resp)
+
+	// msg2 and msg3 should be unread (msg1 was marked read)
+	// CountUnread counts all messages where is_read = 0 regardless of direction
+	if resp.UnreadCount != 2 {
+		t.Errorf("Expected 2 unread messages, got %d", resp.UnreadCount)
+	}
+}
+
+func TestMessageHandler_GetStats(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID and messages
+	did := createTestDID(t, setup.DB, "+15551234567")
+	createTestMessage(t, setup.DB, did.ID, "inbound", "+15559876543", "Inbound 1")
+	createTestMessage(t, setup.DB, did.ID, "inbound", "+15559876543", "Inbound 2")
+	createTestMessage(t, setup.DB, did.ID, "outbound", "+15559876543", "Outbound 1")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/messages/stats", nil)
+	rr := httptest.NewRecorder()
+	handler.GetStats(rr, req)
+
+	assertStatus(t, rr, http.StatusOK)
+
+	var resp map[string]interface{}
+	decodeResponse(t, rr, &resp)
+
+	// Check that stats are returned
+	if resp["total"] == nil {
+		t.Error("Expected 'total' in stats response")
+	}
+	if resp["inbound"] == nil {
+		t.Error("Expected 'inbound' in stats response")
+	}
+	if resp["outbound"] == nil {
+		t.Error("Expected 'outbound' in stats response")
+	}
+
+	// Verify counts
+	if int(resp["total"].(float64)) != 3 {
+		t.Errorf("Expected total 3, got %v", resp["total"])
+	}
+	if int(resp["inbound"].(float64)) != 2 {
+		t.Errorf("Expected inbound 2, got %v", resp["inbound"])
+	}
+	if int(resp["outbound"].(float64)) != 1 {
+		t.Errorf("Expected outbound 1, got %v", resp["outbound"])
+	}
+}
+
+func TestMessageHandler_MarkConversationAsRead(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID and messages in a conversation
+	did := createTestDID(t, setup.DB, "+15551234567")
+	createTestMessage(t, setup.DB, did.ID, "inbound", "+15559876543", "Message 1")
+	createTestMessage(t, setup.DB, did.ID, "inbound", "+15559876543", "Message 2")
+	createTestMessage(t, setup.DB, did.ID, "inbound", "+15558888888", "Different convo")
+
+	// Verify initial unread count
+	unread, _ := setup.DB.Messages.CountUnread(context.Background())
+	if unread != 3 {
+		t.Errorf("Expected 3 unread messages initially, got %d", unread)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/messages/conversation/+15559876543/read?did_id=1", nil)
+	req = withURLParams(req, map[string]string{"number": "+15559876543"})
+
+	rr := httptest.NewRecorder()
+	handler.MarkConversationAsRead(rr, req)
+
+	assertStatus(t, rr, http.StatusOK)
+
+	// Verify unread count decreased (only the different convo message should be unread)
+	unread, _ = setup.DB.Messages.CountUnread(context.Background())
+	if unread != 1 {
+		t.Errorf("Expected 1 unread message after marking conversation read, got %d", unread)
+	}
+}
+
+func TestMessageHandler_MarkConversationAsRead_MissingParams(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB}
+	handler := NewMessageHandler(deps)
+
+	tests := []struct {
+		name   string
+		url    string
+		params map[string]string
+	}{
+		{
+			name:   "Missing number",
+			url:    "/api/messages/conversation//read?did_id=1",
+			params: map[string]string{"number": ""},
+		},
+		{
+			name:   "Missing DID ID",
+			url:    "/api/messages/conversation/+15559876543/read",
+			params: map[string]string{"number": "+15559876543"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, tt.url, nil)
+			req = withURLParams(req, tt.params)
+
+			rr := httptest.NewRecorder()
+			handler.MarkConversationAsRead(rr, req)
+
+			assertStatus(t, rr, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestMessageHandler_Resend(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create a failed outbound message
+	msg := &models.Message{
+		MessageSID: "SM123456789",
+		DIDID:      &did.ID,
+		Direction:  "outbound",
+		FromNumber: "+15551234567",
+		ToNumber:   "+15559876543",
+		Body:       "Failed message",
+		Status:     "failed",
+	}
+	setup.DB.Messages.Create(context.Background(), msg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/1/resend", nil)
+	req = withURLParams(req, map[string]string{"id": "1"})
+
+	rr := httptest.NewRecorder()
+	handler.Resend(rr, req)
+
+	assertStatus(t, rr, http.StatusOK)
+
+	var resp MessageResponse
+	decodeResponse(t, rr, &resp)
+
+	// The response should be the updated message with new TwilioSID and status "sent"
+	if resp.TwilioSID == "" {
+		t.Error("Expected twilio_sid in response")
+	}
+	if resp.Status != "sent" {
+		t.Errorf("Expected status 'sent', got '%s'", resp.Status)
+	}
+}
+
+func TestMessageHandler_Resend_NotOutbound(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create an inbound message (can't resend inbound)
+	msg := &models.Message{
+		MessageSID: "SM123456789",
+		DIDID:      &did.ID,
+		Direction:  "inbound",
+		FromNumber: "+15559876543",
+		ToNumber:   "+15551234567",
+		Body:       "Inbound message",
+		Status:     "received",
+	}
+	setup.DB.Messages.Create(context.Background(), msg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/1/resend", nil)
+	req = withURLParams(req, map[string]string{"id": "1"})
+
+	rr := httptest.NewRecorder()
+	handler.Resend(rr, req)
+
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestMessageHandler_Resend_NotFailedStatus(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create a delivered outbound message (can't resend delivered)
+	msg := &models.Message{
+		MessageSID: "SM123456789",
+		DIDID:      &did.ID,
+		Direction:  "outbound",
+		FromNumber: "+15551234567",
+		ToNumber:   "+15559876543",
+		Body:       "Delivered message",
+		Status:     "delivered",
+	}
+	setup.DB.Messages.Create(context.Background(), msg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/1/resend", nil)
+	req = withURLParams(req, map[string]string{"id": "1"})
+
+	rr := httptest.NewRecorder()
+	handler.Resend(rr, req)
+
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestMessageHandler_Resend_NotFound(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/9999/resend", nil)
+	req = withURLParams(req, map[string]string{"id": "9999"})
+
+	rr := httptest.NewRecorder()
+	handler.Resend(rr, req)
+
+	assertStatus(t, rr, http.StatusNotFound)
+}
+
+func TestMessageHandler_SyncFromTwilio(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create a message with a SID
+	msg := &models.Message{
+		MessageSID: "SM123456789",
+		DIDID:      &did.ID,
+		Direction:  "outbound",
+		FromNumber: "+15551234567",
+		ToNumber:   "+15559876543",
+		Body:       "Test message",
+		Status:     "queued",
+	}
+	setup.DB.Messages.Create(context.Background(), msg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/1/sync", nil)
+	req = withURLParams(req, map[string]string{"id": "1"})
+
+	rr := httptest.NewRecorder()
+	handler.SyncFromTwilio(rr, req)
+
+	assertStatus(t, rr, http.StatusOK)
+}
+
+func TestMessageHandler_SyncFromTwilio_NoSID(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create a message without a SID
+	msg := &models.Message{
+		MessageSID: "",
+		DIDID:      &did.ID,
+		Direction:  "outbound",
+		FromNumber: "+15551234567",
+		ToNumber:   "+15559876543",
+		Body:       "Test message",
+		Status:     "pending",
+	}
+	setup.DB.Messages.Create(context.Background(), msg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/1/sync", nil)
+	req = withURLParams(req, map[string]string{"id": "1"})
+
+	rr := httptest.NewRecorder()
+	handler.SyncFromTwilio(rr, req)
+
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestMessageHandler_Cancel(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create a queued message
+	msg := &models.Message{
+		MessageSID: "SM123456789",
+		DIDID:      &did.ID,
+		Direction:  "outbound",
+		FromNumber: "+15551234567",
+		ToNumber:   "+15559876543",
+		Body:       "Queued message",
+		Status:     "queued",
+	}
+	setup.DB.Messages.Create(context.Background(), msg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/1/cancel", nil)
+	req = withURLParams(req, map[string]string{"id": "1"})
+
+	rr := httptest.NewRecorder()
+	handler.Cancel(rr, req)
+
+	assertStatus(t, rr, http.StatusOK)
+}
+
+func TestMessageHandler_Cancel_NotCancelable(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	// Create test DID
+	did := createTestDID(t, setup.DB, "+15551234567")
+
+	// Create a delivered message (can't cancel delivered)
+	msg := &models.Message{
+		MessageSID: "SM123456789",
+		DIDID:      &did.ID,
+		Direction:  "outbound",
+		FromNumber: "+15551234567",
+		ToNumber:   "+15559876543",
+		Body:       "Delivered message",
+		Status:     "delivered",
+	}
+	setup.DB.Messages.Create(context.Background(), msg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/1/cancel", nil)
+	req = withURLParams(req, map[string]string{"id": "1"})
+
+	rr := httptest.NewRecorder()
+	handler.Cancel(rr, req)
+
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestMessageHandler_Cancel_NotFound(t *testing.T) {
+	setup := setupTestAPI(t)
+	deps := &Dependencies{DB: setup.DB, Twilio: setup.Twilio}
+	handler := NewMessageHandler(deps)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/messages/9999/cancel", nil)
+	req = withURLParams(req, map[string]string{"id": "9999"})
+
+	rr := httptest.NewRecorder()
+	handler.Cancel(rr, req)
+
+	assertStatus(t, rr, http.StatusNotFound)
+}

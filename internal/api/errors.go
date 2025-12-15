@@ -25,14 +25,16 @@ type FieldError struct {
 
 // Standard error codes
 const (
-	ErrCodeValidation     = "VALIDATION_ERROR"
-	ErrCodeAuthentication = "AUTHENTICATION_ERROR"
-	ErrCodeAuthorization  = "AUTHORIZATION_ERROR"
-	ErrCodeNotFound       = "NOT_FOUND"
-	ErrCodeRateLimited    = "RATE_LIMITED"
-	ErrCodeInternal       = "INTERNAL_ERROR"
-	ErrCodeConflict       = "CONFLICT"
-	ErrCodeBadRequest     = "BAD_REQUEST"
+	ErrCodeValidation         = "VALIDATION_ERROR"
+	ErrCodeAuthentication     = "AUTHENTICATION_ERROR"
+	ErrCodeAuthorization      = "AUTHORIZATION_ERROR"
+	ErrCodeNotFound           = "NOT_FOUND"
+	ErrCodeRateLimited        = "RATE_LIMITED"
+	ErrCodeInternal           = "INTERNAL_ERROR"
+	ErrCodeConflict           = "CONFLICT"
+	ErrCodeBadRequest         = "BAD_REQUEST"
+	ErrCodeServiceUnavailable = "SERVICE_UNAVAILABLE"
+	ErrCodeBadGateway         = "BAD_GATEWAY"
 )
 
 // WriteError writes a standardized error response
