@@ -4,6 +4,37 @@ Detailed implementation plan based on Context7 library documentation and shadcn-
 
 ---
 
+## Specification Panel Review Summary
+
+This plan has been reviewed by a multi-expert specification panel (Wiegers, Nygard, Fowler, Adzic methodology). Key improvements incorporated:
+
+**Requirements Quality (Wiegers)**
+- ✅ Concrete P0 constants with testable values
+- ✅ Failure mode response matrices for all components
+- ✅ Requirement traceability in P0 alignment table
+- ✅ TLS/Encryption requirements integrated (Phase 13)
+
+**Production Systems (Nygard - Release It!)**
+- ✅ Circuit breaker pattern for Twilio API (Phase 4.2)
+- ✅ Retry with exponential backoff for external services
+- ✅ Request queuing for outage resilience
+- ✅ Observability with trace IDs, metrics, alerts (Phase 12.2)
+- ✅ Deployment strategy with upgrade/rollback procedures (Phase 12.4)
+
+**Architecture (Fowler)**
+- ✅ Clean separation of concerns (pkg/sip, internal/api, internal/db)
+- ✅ Repository pattern for database access
+- ✅ Health check endpoint with component status
+- ✅ Certificate manager abstraction for TLS
+
+**Testability (Adzic)**
+- ✅ Concrete numerical values for all thresholds
+- ✅ Explicit error response format for contract testing
+- ✅ Device compatibility test checklist
+- ✅ Performance alert thresholds defined
+
+---
+
 ## Technology Reference Summary
 
 | Component | Library | Context7 ID | Key Patterns |
@@ -14,6 +45,9 @@ Detailed implementation plan based on Context7 library documentation and shadcn-
 | Frontend | Vue 3 | `/vuejs/docs` | Composition API, Pinia, Vue Router |
 | UI Components | shadcn-vue | `/llmstxt/shadcn-vue_llms-full_txt` | DataTable, Form, Dialog, Sidebar |
 | Styling | Tailwind CSS | `/websites/tailwindcss` | Utility classes, responsive design |
+| TLS Certificates | CertMagic | `/caddyserver/certmagic` | ACME, DNS-01, Auto-renewal |
+| DNS Provider | libdns/cloudflare | - | Cloudflare DNS-01 challenge |
+| Media Encryption | pion/srtp | - | SRTP for RTP encryption |
 
 ---
 
@@ -101,6 +135,9 @@ require (
     github.com/go-chi/chi/v5 v5.0.12
     github.com/golang-jwt/jwt/v5 v5.2.0
     golang.org/x/crypto v0.21.0
+    github.com/caddyserver/certmagic v0.21.0  // TLS certificate management
+    github.com/libdns/cloudflare v0.1.1       // Cloudflare DNS provider
+    github.com/pion/srtp/v2 v2.0.18           // SRTP for media encryption
 )
 ```
 
@@ -135,7 +172,7 @@ npx shadcn-vue@latest add sheet scroll-area separator avatar
 - [ ] Create `Dockerfile` (multi-stage build)
 - [ ] Create `docker-compose.yml`
 - [ ] Set up volume mounts for data persistence
-- [ ] Configure port mappings (5060/UDP, 5060/TCP, 8080)
+- [ ] Configure port mappings (5060/UDP, 5060/TCP, 5061/TCP TLS, 8080)
 
 ```yaml
 # docker-compose.yml
@@ -145,13 +182,19 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "5060:5060/udp"
-      - "5060:5060/tcp"
-      - "8080:8080"
+      - "5060:5060/udp"   # SIP over UDP
+      - "5060:5060/tcp"   # SIP over TCP
+      - "5061:5061/tcp"   # SIPS (SIP over TLS)
+      - "5081:5081/tcp"   # WSS (WebSocket Secure)
+      - "8080:8080"       # HTTP API
     volumes:
       - ./data:/app/data
     environment:
       - GOSIP_DATA_DIR=/app/data
+      - GOSIP_TLS_ENABLED=true
+      - GOSIP_TLS_PORT=5061
+      - GOSIP_TLS_WSS_PORT=5081
+      - GOSIP_ACME_CA=staging
     restart: unless-stopped
 ```
 
@@ -633,6 +676,86 @@ func (c *Client) SendSMS(from, to, body string, mediaUrls []string) (*twilioApi.
 
 **Twilio API failure handling per REQUIREMENTS.md:**
 
+#### Circuit Breaker Pattern
+
+```go
+// internal/twilio/circuit_breaker.go
+package twilio
+
+import (
+    "errors"
+    "sync"
+    "time"
+)
+
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
+type CircuitState int
+
+const (
+    CircuitClosed CircuitState = iota
+    CircuitOpen
+    CircuitHalfOpen
+)
+
+// CircuitBreaker prevents cascade failures to Twilio
+type CircuitBreaker struct {
+    mu           sync.RWMutex
+    state        CircuitState
+    failures     int
+    threshold    int           // Failures before opening (default: 3)
+    resetAfter   time.Duration // Time before half-open (default: 30s)
+    lastFailure  time.Time
+}
+
+func NewCircuitBreaker() *CircuitBreaker {
+    return &CircuitBreaker{
+        state:      CircuitClosed,
+        threshold:  3,
+        resetAfter: 30 * time.Second,
+    }
+}
+
+func (cb *CircuitBreaker) Call(operation func() error) error {
+    cb.mu.Lock()
+    defer cb.mu.Unlock()
+
+    // Check circuit state
+    if cb.state == CircuitOpen {
+        if time.Since(cb.lastFailure) > cb.resetAfter {
+            cb.state = CircuitHalfOpen
+        } else {
+            return ErrCircuitOpen // Fast-fail
+        }
+    }
+
+    // Execute operation
+    err := operation()
+    if err != nil {
+        cb.recordFailure()
+        return err
+    }
+
+    cb.recordSuccess()
+    return nil
+}
+
+func (cb *CircuitBreaker) recordFailure() {
+    cb.failures++
+    cb.lastFailure = time.Now()
+    if cb.failures >= cb.threshold {
+        cb.state = CircuitOpen
+    }
+}
+
+func (cb *CircuitBreaker) recordSuccess() {
+    cb.failures = 0
+    cb.state = CircuitClosed
+}
+```
+
+#### Retry with Exponential Backoff
+
 ```go
 // internal/twilio/retry.go
 package twilio
@@ -735,10 +858,12 @@ func (q *RequestQueue) ProcessQueue(ctx context.Context, client *Client) {
 | Twilio API | Rate limited (429) | Backoff and queue | Auto-retry after cooldown |
 
 **Tasks:**
+- [ ] Create `internal/twilio/circuit_breaker.go` - circuit breaker pattern
 - [ ] Create `internal/twilio/retry.go` - retry logic with exponential backoff
 - [ ] Create `internal/twilio/queue.go` - request queue for outages
 - [ ] Implement admin alerting after 3 consecutive failures
 - [ ] Add rate limit detection (HTTP 429) with Retry-After parsing
+- [ ] Integrate circuit breaker with all Twilio API calls
 
 ### 4.3 Webhook Handlers
 
@@ -1415,11 +1540,84 @@ func (h *RecordingHandler) ShouldRecord(deviceID int64) bool {
 
 ### 12.2 Observability
 
+**Trace ID Propagation:**
+```go
+// internal/api/middleware.go
+func TraceIDMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        traceID := r.Header.Get("X-Trace-ID")
+        if traceID == "" {
+            traceID = uuid.NewString()
+        }
+
+        ctx := context.WithValue(r.Context(), TraceIDKey, traceID)
+        w.Header().Set("X-Trace-ID", traceID)
+
+        // Add to all log entries
+        logger := slog.Default().With("trace_id", traceID)
+        ctx = context.WithValue(ctx, LoggerKey, logger)
+
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+```
+
+**Metric Naming Convention:**
+```go
+// internal/metrics/metrics.go
+var (
+    // Counters
+    SIPRegistrationsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "gosip_sip_registrations_total",
+            Help: "Total number of SIP registrations",
+        },
+        []string{"status", "device_type"},
+    )
+
+    // Histograms
+    SIPRegistrationDuration = prometheus.NewHistogram(
+        prometheus.HistogramOpts{
+            Name:    "gosip_sip_registration_duration_seconds",
+            Help:    "SIP registration duration",
+            Buckets: []float64{0.1, 0.25, 0.5, 1, 2},
+        },
+    )
+
+    APIRequestDuration = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "gosip_api_request_duration_seconds",
+            Help:    "API request duration",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"endpoint", "method", "status"},
+    )
+
+    // Gauges
+    ActiveCalls = prometheus.NewGauge(
+        prometheus.GaugeOpts{
+            Name: "gosip_active_calls",
+            Help: "Number of active calls",
+        },
+    )
+)
+```
+
+**Alert Thresholds (for external alerting systems):**
+| Metric | Condition | Severity |
+|--------|-----------|----------|
+| `gosip_twilio_errors_total` | > 10% error rate for 5 minutes | Critical |
+| `gosip_sip_registration_errors_total` | > 20% failure rate | Warning |
+| `gosip_api_request_duration_seconds{quantile="0.99"}` | > 1 second | Warning |
+| `gosip_active_calls` | > 4 (approaching limit) | Warning |
+
 **Tasks:**
-- [ ] Structured logging (slog)
-- [ ] Health check endpoint
-- [ ] Metrics (optional Prometheus)
-- [ ] Error tracking
+- [ ] Structured logging (slog) with trace ID propagation
+- [ ] Health check endpoint (`/health` with component status)
+- [ ] Metrics endpoint (`/metrics` for Prometheus)
+- [ ] Log correlation between SIP and REST handlers
+- [ ] Error tracking with context enrichment
+- [ ] Alert threshold documentation
 
 ### 12.3 Documentation
 
@@ -1428,6 +1626,467 @@ func (h *RecordingHandler) ShouldRecord(deviceID int64) bool {
 - [ ] Deployment guide
 - [ ] Configuration reference
 - [ ] Troubleshooting guide
+
+### 12.4 Deployment Strategy
+
+**Upgrade Procedure:**
+```bash
+# 1. Backup SQLite database
+cp data/gosip.db data/gosip.db.backup-$(date +%Y%m%d)
+
+# 2. Check active calls (wait for completion or drain)
+curl http://localhost:8080/api/system/status | jq '.activeCalls'
+
+# 3. Stop container
+docker-compose down
+
+# 4. Update image
+docker pull btafoya/gosip:latest
+# or: docker-compose build
+
+# 5. Start container
+docker-compose up -d
+
+# 6. Verify health check
+curl http://localhost:8080/health
+
+# 7. Monitor logs for 30 minutes
+docker-compose logs -f --tail=100
+```
+
+**Rollback Procedure:**
+```bash
+# 1. Stop container
+docker-compose down
+
+# 2. Restore SQLite backup
+cp data/gosip.db.backup-YYYYMMDD data/gosip.db
+
+# 3. Deploy previous image version
+docker-compose pull btafoya/gosip:previous-tag
+docker-compose up -d
+
+# 4. Verify health check
+curl http://localhost:8080/health
+```
+
+**Health Check Endpoint:**
+```go
+// GET /health
+{
+    "status": "healthy",
+    "version": "1.0.0",
+    "uptime": "2h30m15s",
+    "components": {
+        "database": "healthy",
+        "sip_udp": "healthy",
+        "sip_tcp": "healthy",
+        "sip_tls": "healthy",  // if enabled
+        "twilio": "healthy"
+    },
+    "metrics": {
+        "active_calls": 2,
+        "active_registrations": 3
+    }
+}
+```
+
+**Tasks:**
+- [ ] Create upgrade script with pre-flight checks
+- [ ] Create rollback script
+- [ ] Implement health check endpoint with component status
+- [ ] Add graceful shutdown with call draining
+- [ ] Document backup and restore procedures
+
+---
+
+## Phase 13: TLS/Encryption Support
+
+**Goal**: Secure SIP signaling with TLS and optional media encryption with SRTP
+
+**Architecture Overview:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         GoSIP Server                            │
+├──────────────┬──────────────┬──────────────┬───────────────────┤
+│  UDP:5060    │  TCP:5060    │  TLS:5061    │  WSS:5081         │
+│  (SIP)       │  (SIP)       │  (SIPS)      │  (WebSocket/TLS)  │
+├──────────────┴──────────────┴──────────────┴───────────────────┤
+│                     Certificate Manager                         │
+│              (CertMagic + Cloudflare DNS-01)                    │
+├─────────────────────────────────────────────────────────────────┤
+│                   Media Encryption (Optional)                   │
+│                        pion/srtp                                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 13.1 TLS Configuration
+
+**File**: `internal/config/config.go` additions
+
+```go
+// TLSConfig holds TLS-specific configuration
+type TLSConfig struct {
+    // Enabled enables TLS/SIPS support
+    Enabled bool
+
+    // Port for SIPS (default: 5061)
+    Port int
+
+    // WSSPort for WebSocket Secure (default: 5081)
+    WSSPort int
+
+    // CertMode: "manual" | "acme"
+    CertMode string
+
+    // Manual certificate paths (when CertMode = "manual")
+    CertFile string
+    KeyFile  string
+    CAFile   string // Optional CA certificate for client verification
+
+    // ACME/Let's Encrypt settings (when CertMode = "acme")
+    ACMEEmail   string
+    ACMEDomain  string   // Primary domain for certificate
+    ACMEDomains []string // Additional SANs
+    ACMECA      string   // "production" | "staging"
+
+    // Cloudflare DNS challenge settings
+    CloudflareAPIToken string
+
+    // Client certificate verification
+    ClientAuth string // "none" | "request" | "require"
+
+    // Minimum TLS version: "1.2" | "1.3"
+    MinVersion string
+}
+```
+
+**Environment Variables:**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GOSIP_TLS_ENABLED` | Enable TLS support | `false` |
+| `GOSIP_TLS_PORT` | SIPS port | `5061` |
+| `GOSIP_TLS_WSS_PORT` | WSS port | `5081` |
+| `GOSIP_TLS_CERT_MODE` | `manual` or `acme` | `acme` |
+| `GOSIP_TLS_CERT_FILE` | Path to certificate (manual mode) | - |
+| `GOSIP_TLS_KEY_FILE` | Path to private key (manual mode) | - |
+| `GOSIP_ACME_EMAIL` | Email for Let's Encrypt | - |
+| `GOSIP_ACME_DOMAIN` | Primary domain | - |
+| `GOSIP_ACME_CA` | `production` or `staging` | `staging` |
+| `CLOUDFLARE_DNS_API_TOKEN` | Cloudflare API token for DNS-01 | - |
+| `GOSIP_TLS_MIN_VERSION` | Minimum TLS version | `1.2` |
+
+**Tasks:**
+- [ ] Add TLSConfig struct to config package
+- [ ] Add environment variable parsing for TLS options
+- [ ] Add TLS defaults to constants.go
+- [ ] Create database migration for TLS configuration storage
+
+### 13.2 Certificate Manager
+
+**File**: `pkg/sip/certmanager.go`
+
+```go
+package sip
+
+import (
+    "context"
+    "crypto/tls"
+    "fmt"
+    "sync"
+
+    "github.com/caddyserver/certmagic"
+    "github.com/libdns/cloudflare"
+)
+
+// CertManager handles TLS certificate lifecycle
+type CertManager struct {
+    config    *TLSConfig
+    tlsConfig *tls.Config
+    magic     *certmagic.Config
+    mu        sync.RWMutex
+}
+
+// NewCertManager creates a certificate manager
+func NewCertManager(cfg *TLSConfig) (*CertManager, error) {
+    cm := &CertManager{config: cfg}
+
+    if cfg.CertMode == "manual" {
+        return cm.initManual()
+    }
+    return cm.initACME()
+}
+
+// initManual loads certificates from files
+func (cm *CertManager) initManual() (*CertManager, error) {
+    cert, err := tls.LoadX509KeyPair(cm.config.CertFile, cm.config.KeyFile)
+    if err != nil {
+        return nil, fmt.Errorf("load certificate: %w", err)
+    }
+
+    cm.tlsConfig = &tls.Config{
+        Certificates: []tls.Certificate{cert},
+        MinVersion:   tls.VersionTLS12,
+    }
+
+    return cm, nil
+}
+
+// initACME sets up automatic certificate management
+func (cm *CertManager) initACME() (*CertManager, error) {
+    // Configure Cloudflare DNS provider
+    cfProvider := &cloudflare.Provider{
+        APIToken: cm.config.CloudflareAPIToken,
+    }
+
+    // Configure ACME settings
+    certmagic.DefaultACME.Agreed = true
+    certmagic.DefaultACME.Email = cm.config.ACMEEmail
+    certmagic.DefaultACME.DNS01Solver = &certmagic.DNS01Solver{
+        DNSManager: certmagic.DNSManager{
+            DNSProvider: cfProvider,
+        },
+    }
+
+    // Set CA based on configuration
+    if cm.config.ACMECA == "production" {
+        certmagic.DefaultACME.CA = certmagic.LetsEncryptProductionCA
+    } else {
+        certmagic.DefaultACME.CA = certmagic.LetsEncryptStagingCA
+    }
+
+    // Create CertMagic config
+    cm.magic = certmagic.NewDefault()
+
+    // Build domain list
+    domains := []string{cm.config.ACMEDomain}
+    domains = append(domains, cm.config.ACMEDomains...)
+
+    // Obtain certificates (async to not block startup)
+    ctx := context.Background()
+    if err := cm.magic.ManageAsync(ctx, domains); err != nil {
+        return nil, fmt.Errorf("certmagic manage: %w", err)
+    }
+
+    // Get TLS config from CertMagic
+    cm.tlsConfig = cm.magic.TLSConfig()
+    cm.tlsConfig.MinVersion = tls.VersionTLS12
+
+    return cm, nil
+}
+
+// GetTLSConfig returns the current TLS configuration
+func (cm *CertManager) GetTLSConfig() *tls.Config {
+    cm.mu.RLock()
+    defer cm.mu.RUnlock()
+    return cm.tlsConfig
+}
+```
+
+**Tasks:**
+- [ ] Create `pkg/sip/certmanager.go`
+- [ ] Implement manual certificate loading
+- [ ] Implement ACME/CertMagic integration
+- [ ] Add Cloudflare DNS-01 challenge support
+- [ ] Configure certificate storage in data directory
+
+### 13.3 TLS Listener Integration
+
+**File**: `pkg/sip/server.go` modifications
+
+```go
+// Start begins listening for SIP messages
+func (s *Server) Start(ctx context.Context) error {
+    // ... existing setup ...
+
+    // Start UDP listener (unencrypted)
+    addr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Port)
+    go s.srv.ListenAndServe(ctx, "udp", addr)
+
+    // Start TCP listener (unencrypted)
+    go s.srv.ListenAndServe(ctx, "tcp", addr)
+
+    // Start TLS listener if enabled
+    if s.certMgr != nil {
+        tlsAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.TLS.Port)
+        tlsConfig := s.certMgr.GetTLSConfig()
+
+        go func() {
+            slog.Info("Starting SIP TLS listener", "addr", tlsAddr)
+            if err := s.srv.ListenAndServeTLS(ctx, "tcp", tlsAddr, tlsConfig); err != nil {
+                slog.Error("SIP TLS listener error", "error", err)
+            }
+        }()
+
+        // Start WSS listener if configured
+        if s.cfg.TLS.WSSPort > 0 {
+            wssAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.TLS.WSSPort)
+            go func() {
+                slog.Info("Starting SIP WSS listener", "addr", wssAddr)
+                if err := s.srv.ListenAndServeTLS(ctx, "ws", wssAddr, tlsConfig); err != nil {
+                    slog.Error("SIP WSS listener error", "error", err)
+                }
+            }()
+        }
+    }
+
+    // ... existing cleanup goroutines ...
+    return nil
+}
+```
+
+**Tasks:**
+- [ ] Add CertManager field to Server struct
+- [ ] Initialize CertManager in NewServer
+- [ ] Add TLS listener startup in Start method
+- [ ] Add WSS listener startup (optional)
+- [ ] Update transport tracking in registrations
+
+### 13.4 TLS API Endpoints
+
+**File**: `internal/api/tls.go`
+
+```go
+package api
+
+// TLS Status API
+type TLSStatus struct {
+    Enabled       bool     `json:"enabled"`
+    CertMode      string   `json:"certMode"`
+    Domain        string   `json:"domain"`
+    Domains       []string `json:"domains"`
+    CertExpiry    string   `json:"certExpiry,omitempty"`
+    CertIssuer    string   `json:"certIssuer,omitempty"`
+    AutoRenewal   bool     `json:"autoRenewal"`
+    LastRenewal   string   `json:"lastRenewal,omitempty"`
+    NextRenewal   string   `json:"nextRenewal,omitempty"`
+}
+
+// GET  /api/system/tls           - Get TLS status
+// PUT  /api/system/tls           - Update TLS configuration
+// POST /api/system/tls/test      - Test TLS configuration
+// GET  /api/system/tls/cert      - Get certificate details
+// POST /api/system/tls/cert/renew - Force certificate renewal
+```
+
+**Tasks:**
+- [ ] Create `internal/api/tls.go` with TLS status endpoints
+- [ ] Add TLS configuration update endpoint
+- [ ] Add certificate status/details endpoint
+- [ ] Add manual certificate renewal endpoint
+- [ ] Register TLS routes in router
+
+### 13.5 SRTP Support (Optional)
+
+**File**: `pkg/sip/srtp.go`
+
+```go
+package sip
+
+import (
+    "github.com/pion/srtp/v2"
+)
+
+// SRTPContext wraps pion/srtp for media encryption
+type SRTPContext struct {
+    encryptCtx *srtp.Context
+    decryptCtx *srtp.Context
+}
+
+// NewSRTPContext creates SRTP encryption/decryption contexts
+func NewSRTPContext(masterKey, masterSalt []byte) (*SRTPContext, error) {
+    profile := srtp.ProtectionProfileAes128CmHmacSha1_80
+
+    encryptCtx, err := srtp.CreateContext(masterKey, masterSalt, profile)
+    if err != nil {
+        return nil, err
+    }
+
+    decryptCtx, err := srtp.CreateContext(masterKey, masterSalt, profile)
+    if err != nil {
+        return nil, err
+    }
+
+    return &SRTPContext{
+        encryptCtx: encryptCtx,
+        decryptCtx: decryptCtx,
+    }, nil
+}
+
+// EncryptRTP encrypts an RTP packet
+func (s *SRTPContext) EncryptRTP(dst, src []byte) ([]byte, error) {
+    return s.encryptCtx.EncryptRTP(dst, src, nil)
+}
+
+// DecryptRTP decrypts an SRTP packet
+func (s *SRTPContext) DecryptRTP(dst, src []byte) ([]byte, error) {
+    return s.decryptCtx.DecryptRTP(dst, src, nil)
+}
+```
+
+**SDP Negotiation for SRTP:**
+```
+m=audio 49170 RTP/SAVP 0
+a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:WVNfX19zZW1jdGwgKCkgewkyMjA7fQp9
+```
+
+**Tasks:**
+- [ ] Create `pkg/sip/srtp.go` with pion/srtp integration
+- [ ] Implement SDP crypto attribute generation
+- [ ] Implement SDP crypto attribute parsing
+- [ ] Add SRTP toggle in configuration
+- [ ] Integrate SRTP with call setup flow
+
+### 13.6 Frontend TLS Configuration
+
+**File**: `frontend/src/views/admin/TLSSettings.vue`
+
+**Tasks:**
+- [ ] Create TLS configuration form
+- [ ] Add certificate status display (issuer, expiry, domains)
+- [ ] Add certificate renewal button
+- [ ] Add Let's Encrypt vs manual certificate toggle
+- [ ] Display TLS listener status
+
+### 13.7 Database Migration
+
+**File**: `migrations/XXX_add_tls_config.sql`
+
+```sql
+-- Add TLS configuration storage
+INSERT INTO config (key, value) VALUES ('tls_enabled', '0');
+INSERT INTO config (key, value) VALUES ('tls_cert_mode', 'acme');
+INSERT INTO config (key, value) VALUES ('tls_cert_file', '');
+INSERT INTO config (key, value) VALUES ('tls_key_file', '');
+INSERT INTO config (key, value) VALUES ('acme_email', '');
+INSERT INTO config (key, value) VALUES ('acme_domain', '');
+INSERT INTO config (key, value) VALUES ('cloudflare_api_token', '');
+INSERT INTO config (key, value) VALUES ('srtp_enabled', '0');
+```
+
+**Tasks:**
+- [ ] Create TLS configuration migration
+- [ ] Add secure storage for Cloudflare API token (encrypted)
+
+### 13.8 Testing & Validation
+
+**Device Compatibility Testing:**
+- [ ] Grandstream GXP1760W SIPS registration on port 5061
+- [ ] Onesip iOS softphone with TLS
+- [ ] Zoiper with TLS
+- [ ] Twilio SIP trunk TLS connection
+
+**Certificate Testing:**
+- [ ] Let's Encrypt staging certificate issuance
+- [ ] Let's Encrypt production certificate issuance
+- [ ] Cloudflare DNS-01 challenge verification
+- [ ] Certificate auto-renewal (30 days before expiry)
+- [ ] Manual certificate upload and reload
+
+**Security Testing:**
+- [ ] TLS 1.2 minimum enforcement
+- [ ] Cipher suite validation
+- [ ] Certificate chain verification
 
 ---
 
@@ -1447,6 +2106,9 @@ func (h *RecordingHandler) ShouldRecord(deviceID int64) bool {
 | 10 | Notifications | Phase 5 | Low |
 | 11 | Testing | All phases | Medium |
 | 12 | Production | All phases | Medium |
+| 13 | TLS/Encryption | Phase 3, 12.1 | Medium |
+
+**Note**: Phase 13 (TLS/Encryption) can be started after Phase 3 is complete and run in parallel with Phases 4-12. Certificate management and TLS configuration can be developed incrementally.
 
 ---
 
@@ -1551,13 +2213,19 @@ The following P0 requirements from REQUIREMENTS.md are implemented in this plan:
 | Security (5 attempts → 15-min lockout, 24h sessions) | Phase 1.0 - `constants.go`, Phase 5.2 |
 | Voicemail Settings (30s ring, 3min max, 3s min) | Phase 1.0 - `constants.go` |
 | Database Indexes (10 performance indexes) | Phase 2.1 - `002_add_indexes.up.sql` |
-| Twilio Failure Handling (queue, retry, alert) | Phase 4.2 |
+| Twilio Failure Handling (queue, retry, alert, circuit breaker) | Phase 4.2 |
 | API Error Format (standard JSON structure) | Phase 5.2 |
 | Login Attempt Tracking (IP-based lockout) | Phase 5.2 |
 | SIP Device Offline Handling (maintain call until BYE) | Phase 3.4 |
 | Email Retry (3x over 1 hour) | Phase 10.4 |
 | Gotify Silent Fail (3 attempts) | Phase 10.4 |
 | Recording Storage Full (skip, alert admin) | Phase 10.4 |
+| Observability (trace IDs, metrics, logging) | Phase 12.2 |
+| Deployment Strategy (upgrade, rollback, health checks) | Phase 12.4 |
+| TLS/SIPS for encrypted signaling (port 5061) | Phase 13.1-13.3 |
+| Automatic certificate management (Let's Encrypt/ACME) | Phase 13.2 |
+| Cloudflare DNS-01 challenge for certificate issuance | Phase 13.2 |
+| SRTP for encrypted media (optional) | Phase 13.5 |
 
 ---
 
