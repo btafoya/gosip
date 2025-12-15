@@ -42,6 +42,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 	webhookHandler := NewWebhookHandler(deps)
 	provisioningHandler := NewProvisioningHandler(deps)
 	callHandler := NewCallHandler(deps)
+	mwiHandler := NewMWIHandler(deps)
 
 	// Health endpoints
 	healthHandler := NewHealthHandler("0.1.0")
@@ -159,6 +160,12 @@ func NewRouter(deps *Dependencies) chi.Router {
 				r.Get("/{id}", voicemailHandler.Get)
 				r.Put("/{id}/read", voicemailHandler.MarkAsRead)
 				r.Delete("/{id}", voicemailHandler.Delete)
+			})
+
+			// MWI (Message Waiting Indicator) status
+			r.Route("/mwi", func(r chi.Router) {
+				r.Get("/status", mwiHandler.GetStatus)
+				r.Post("/notify", mwiHandler.TriggerNotification)
 			})
 
 			// Messages

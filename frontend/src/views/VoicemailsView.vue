@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { Voicemail, Play, Pause, Trash2, RefreshCw, Mail, MailOpen, Download } from 'lucide-vue-next'
+import { Voicemail, Play, Pause, Trash2, RefreshCw, Mail, MailOpen, Download, Bell, BellOff, ChevronDown, ChevronUp, Phone, Send } from 'lucide-vue-next'
 import api from '@/api/client'
 
 interface VoicemailRecord {
@@ -16,14 +16,44 @@ interface VoicemailRecord {
   created_at: string
 }
 
+interface MWIState {
+  aor: string
+  new_messages: number
+  old_messages: number
+  new_urgent: number
+  old_urgent: number
+  last_updated: string
+}
+
+interface MWISubscription {
+  id: string
+  aor: string
+  contact_uri: string
+  expires: number
+  expires_at: string
+}
+
+interface MWIStatus {
+  enabled: boolean
+  subscription_count: number
+  states: MWIState[]
+  subscriptions: MWISubscription[]
+}
+
 const voicemails = ref<VoicemailRecord[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
 const playingId = ref<number | null>(null)
 const audioRef = ref<HTMLAudioElement | null>(null)
 
+// MWI state
+const mwiStatus = ref<MWIStatus | null>(null)
+const mwiLoading = ref(false)
+const mwiExpanded = ref(false)
+const mwiNotifying = ref(false)
+
 onMounted(async () => {
-  await loadVoicemails()
+  await Promise.all([loadVoicemails(), loadMWIStatus()])
 })
 
 async function loadVoicemails() {
@@ -39,10 +69,38 @@ async function loadVoicemails() {
   }
 }
 
+async function loadMWIStatus() {
+  mwiLoading.value = true
+  try {
+    const response = await api.get('/mwi/status')
+    mwiStatus.value = response.data.data || response.data
+  } catch {
+    // MWI status is optional, don't show error
+    mwiStatus.value = null
+  } finally {
+    mwiLoading.value = false
+  }
+}
+
+async function triggerMWINotification() {
+  mwiNotifying.value = true
+  try {
+    await api.post('/mwi/notify')
+    // Refresh status after notification
+    await loadMWIStatus()
+  } catch {
+    error.value = 'Failed to trigger MWI notification'
+  } finally {
+    mwiNotifying.value = false
+  }
+}
+
 async function toggleRead(vm: VoicemailRecord) {
   try {
-    await api.put(`/voicemails/${vm.id}`, { read: !vm.read })
+    await api.put(`/voicemails/${vm.id}/read`)
     vm.read = !vm.read
+    // Refresh MWI status since it may have changed
+    await loadMWIStatus()
   } catch {
     error.value = 'Failed to update voicemail'
   }
@@ -54,6 +112,8 @@ async function deleteVoicemail(vm: VoicemailRecord) {
   try {
     await api.delete(`/voicemails/${vm.id}`)
     voicemails.value = voicemails.value.filter(v => v.id !== vm.id)
+    // Refresh MWI status since it may have changed
+    await loadMWIStatus()
   } catch {
     error.value = 'Failed to delete voicemail'
   }
@@ -108,6 +168,12 @@ function formatPhoneNumber(phone: string): string {
   return phone
 }
 
+function extractUsername(aor: string): string {
+  // Extract username from "sip:username@domain"
+  const match = aor.match(/sip:([^@]+)@/)
+  return match ? match[1] : aor
+}
+
 const unreadCount = computed(() => voicemails.value.filter(v => !v.read).length)
 </script>
 
@@ -126,6 +192,135 @@ const unreadCount = computed(() => voicemails.value.filter(v => !v.read).length)
       >
         <RefreshCw class="h-4 w-4" />
       </button>
+    </div>
+
+    <!-- MWI Status Panel -->
+    <div class="mt-4 bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
+      <button
+        @click="mwiExpanded = !mwiExpanded"
+        class="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+      >
+        <div class="flex items-center space-x-3">
+          <div :class="[
+            'p-2 rounded-full',
+            mwiStatus?.enabled ? 'bg-green-100 dark:bg-green-900' : 'bg-gray-100 dark:bg-gray-700'
+          ]">
+            <component
+              :is="mwiStatus?.enabled ? Bell : BellOff"
+              :class="[
+                'h-4 w-4',
+                mwiStatus?.enabled ? 'text-green-600 dark:text-green-400' : 'text-gray-400'
+              ]"
+            />
+          </div>
+          <div>
+            <span class="font-medium text-gray-900 dark:text-white">Message Waiting Indicator (MWI)</span>
+            <span v-if="mwiStatus" class="ml-2 text-sm text-gray-500">
+              {{ mwiStatus.enabled ? `${mwiStatus.subscription_count} device(s) subscribed` : 'Disabled' }}
+            </span>
+          </div>
+        </div>
+        <component :is="mwiExpanded ? ChevronUp : ChevronDown" class="h-5 w-5 text-gray-400" />
+      </button>
+
+      <div v-if="mwiExpanded" class="border-t border-gray-200 dark:border-gray-700 px-4 py-4 space-y-4">
+        <div v-if="mwiLoading" class="text-gray-500 text-sm">Loading MWI status...</div>
+
+        <div v-else-if="!mwiStatus || !mwiStatus.enabled" class="text-center py-4">
+          <BellOff class="h-8 w-8 mx-auto mb-2 text-gray-300" />
+          <p class="text-sm text-gray-500">MWI is not available. The SIP server may not be running.</p>
+        </div>
+
+        <template v-else>
+          <!-- Status Summary -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-primary">{{ mwiStatus.subscription_count }}</div>
+              <div class="text-xs text-gray-500">Subscribed Devices</div>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-orange-500">{{ mwiStatus.states.length }}</div>
+              <div class="text-xs text-gray-500">Active Mailboxes</div>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-red-500">{{ unreadCount }}</div>
+              <div class="text-xs text-gray-500">Unread Messages</div>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-gray-500">{{ voicemails.length - unreadCount }}</div>
+              <div class="text-xs text-gray-500">Read Messages</div>
+            </div>
+          </div>
+
+          <!-- Subscriptions -->
+          <div v-if="mwiStatus.subscriptions.length > 0">
+            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Active Subscriptions</h3>
+            <div class="space-y-2">
+              <div
+                v-for="sub in mwiStatus.subscriptions"
+                :key="sub.id"
+                class="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2"
+              >
+                <div class="flex items-center space-x-3">
+                  <Phone class="h-4 w-4 text-gray-400" />
+                  <div>
+                    <span class="font-mono text-sm text-gray-900 dark:text-white">{{ extractUsername(sub.aor) }}</span>
+                    <span class="ml-2 text-xs text-gray-500">→ {{ sub.contact_uri }}</span>
+                  </div>
+                </div>
+                <div class="text-xs text-gray-500">
+                  Expires: {{ sub.expires }}s
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Mailbox States -->
+          <div v-if="mwiStatus.states.length > 0">
+            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Mailbox States</h3>
+            <div class="space-y-2">
+              <div
+                v-for="state in mwiStatus.states"
+                :key="state.aor"
+                class="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2"
+              >
+                <div class="flex items-center space-x-3">
+                  <Voicemail class="h-4 w-4 text-orange-500" />
+                  <span class="font-mono text-sm text-gray-900 dark:text-white">{{ extractUsername(state.aor) }}</span>
+                </div>
+                <div class="flex items-center space-x-4 text-sm">
+                  <span :class="state.new_messages > 0 ? 'text-red-500 font-medium' : 'text-gray-500'">
+                    {{ state.new_messages }} new
+                  </span>
+                  <span class="text-gray-400">{{ state.old_messages }} old</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- No subscriptions message -->
+          <div v-if="mwiStatus.subscriptions.length === 0" class="text-center py-4">
+            <Phone class="h-8 w-8 mx-auto mb-2 text-gray-300" />
+            <p class="text-sm text-gray-500">No devices are currently subscribed to MWI.</p>
+            <p class="text-xs text-gray-400 mt-1">Phones will subscribe automatically when registered.</p>
+          </div>
+
+          <!-- Manual Trigger Button -->
+          <div class="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <button
+              @click="triggerMWINotification"
+              :disabled="mwiNotifying || mwiStatus.subscriptions.length === 0"
+              class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Send class="h-4 w-4 mr-2" />
+              {{ mwiNotifying ? 'Sending...' : 'Test MWI Notification' }}
+            </button>
+            <p class="mt-2 text-xs text-gray-500">
+              Manually send MWI notifications to all subscribed devices for troubleshooting.
+            </p>
+          </div>
+        </template>
+      </div>
     </div>
 
     <div v-if="error" class="mt-4 bg-destructive/10 text-destructive px-4 py-3 rounded-md">
