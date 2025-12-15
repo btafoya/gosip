@@ -36,6 +36,28 @@ export interface MOHUpdateRequest {
   audio_path?: string
 }
 
+export interface WAVValidationError {
+  code: string
+  message: string
+  details?: string
+}
+
+export interface MOHUploadResponse {
+  success: boolean
+  message: string
+  file_path?: string
+  duration?: number
+  warnings?: string[]
+  error?: WAVValidationError
+}
+
+export interface WAVValidationResult {
+  valid: boolean
+  duration?: number
+  warnings?: string[]
+  error?: WAVValidationError
+}
+
 export const callsApi = {
   // List all active calls
   async listActiveCalls(): Promise<{ data: ActiveCall[]; count: number }> {
@@ -99,6 +121,40 @@ export const callsApi = {
     const response = await apiClient.put<{ success: boolean; data: MOHStatus }>(
       '/calls/moh',
       settings
+    )
+    return response.data
+  },
+
+  // Upload MOH audio file
+  async uploadMOHAudio(file: File): Promise<MOHUploadResponse> {
+    const formData = new FormData()
+    formData.append('audio', file)
+
+    const response = await apiClient.post<MOHUploadResponse>(
+      '/calls/moh/upload',
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      }
+    )
+    return response.data
+  },
+
+  // Validate MOH audio file without saving
+  async validateMOHAudio(file: File): Promise<WAVValidationResult> {
+    const formData = new FormData()
+    formData.append('audio', file)
+
+    const response = await apiClient.post<WAVValidationResult>(
+      '/calls/moh/validate',
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      }
     )
     return response.data
   }

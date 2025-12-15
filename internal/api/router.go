@@ -147,6 +147,8 @@ func NewRouter(deps *Dependencies) chi.Router {
 				r.Get("/", callHandler.ListActiveCalls)
 				r.Get("/moh", callHandler.GetMOHStatus)
 				r.Put("/moh", callHandler.UpdateMOH)
+				r.Post("/moh/upload", callHandler.UploadMOHAudio)
+				r.Post("/moh/validate", callHandler.ValidateMOHAudio)
 				r.Get("/{callID}", callHandler.GetCall)
 				r.Post("/{callID}/hold", callHandler.HoldCall)
 				r.Post("/{callID}/transfer", callHandler.TransferCall)

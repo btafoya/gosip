@@ -2,8 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"time"
 
+	"github.com/btafoya/gosip/internal/audio"
 	"github.com/btafoya/gosip/pkg/sip"
 	"github.com/go-chi/chi/v5"
 )
@@ -413,4 +419,173 @@ func (h *CallHandler) UpdateMOH(w http.ResponseWriter, r *http.Request) {
 			ActiveCount: status.ActiveCount,
 		},
 	})
+}
+
+// MOHUploadResponse represents the response from uploading MOH audio
+type MOHUploadResponse struct {
+	Success   bool                       `json:"success"`
+	Message   string                     `json:"message"`
+	FilePath  string                     `json:"file_path,omitempty"`
+	Duration  float64                    `json:"duration,omitempty"`
+	Warnings  []string                   `json:"warnings,omitempty"`
+	Error     *audio.WAVValidationError  `json:"error,omitempty"`
+}
+
+// UploadMOHAudio handles uploading a WAV file for Music on Hold
+// POST /api/calls/moh/upload
+func (h *CallHandler) UploadMOHAudio(w http.ResponseWriter, r *http.Request) {
+	// Max upload size: 10MB (matching audio.MaxFileSize)
+	const maxUploadSize = 10 * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		if err.Error() == "http: request body too large" {
+			WriteError(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE",
+				"File is too large. Maximum size is 10MB.", nil)
+			return
+		}
+		WriteValidationError(w, "Failed to parse form data", nil)
+		return
+	}
+
+	// Get the uploaded file
+	file, header, err := r.FormFile("audio")
+	if err != nil {
+		WriteValidationError(w, "No audio file provided. Use form field 'audio'.", nil)
+		return
+	}
+	defer file.Close()
+
+	// Check file extension
+	ext := filepath.Ext(header.Filename)
+	if ext != ".wav" && ext != ".WAV" {
+		WriteError(w, http.StatusBadRequest, "INVALID_FORMAT",
+			"Only WAV files are supported. Please upload a .wav file.", nil)
+		return
+	}
+
+	// Validate the WAV file
+	validationResult := audio.ValidateWAV(file, header.Size)
+	if !validationResult.Valid {
+		WriteJSON(w, http.StatusBadRequest, MOHUploadResponse{
+			Success: false,
+			Message: "WAV file validation failed",
+			Error:   validationResult.Error,
+		})
+		return
+	}
+
+	// Reset file reader for saving
+	if seeker, ok := file.(io.Seeker); ok {
+		seeker.Seek(0, io.SeekStart)
+	} else {
+		// If we can't seek, we need to re-read from form
+		file.Close()
+		file, _, err = r.FormFile("audio")
+		if err != nil {
+			WriteInternalError(w)
+			return
+		}
+		defer file.Close()
+	}
+
+	// Create MOH directory if it doesn't exist
+	mohDir := "/var/lib/gosip/moh"
+	if err := os.MkdirAll(mohDir, 0755); err != nil {
+		// Fallback to data directory
+		mohDir = "data/moh"
+		if err := os.MkdirAll(mohDir, 0755); err != nil {
+			WriteError(w, http.StatusInternalServerError, "STORAGE_ERROR",
+				"Failed to create MOH storage directory", nil)
+			return
+		}
+	}
+
+	// Generate filename with timestamp
+	timestamp := time.Now().Format("20060102_150405")
+	filename := fmt.Sprintf("moh_%s.wav", timestamp)
+	filePath := filepath.Join(mohDir, filename)
+
+	// Save the file
+	dst, err := os.Create(filePath)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "STORAGE_ERROR",
+			"Failed to create audio file", nil)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		os.Remove(filePath) // Clean up on error
+		WriteError(w, http.StatusInternalServerError, "STORAGE_ERROR",
+			"Failed to save audio file", nil)
+		return
+	}
+
+	// Update MOH manager with new audio path
+	if h.deps.SIP != nil {
+		mohMgr := h.deps.SIP.GetMOHManager()
+		if mohMgr != nil {
+			mohMgr.SetAudioPath(filePath)
+		}
+	}
+
+	// Store the path in config for persistence
+	if h.deps.DB != nil {
+		h.deps.DB.Config.Set(r.Context(), "moh_audio_path", filePath)
+	}
+
+	WriteJSON(w, http.StatusOK, MOHUploadResponse{
+		Success:  true,
+		Message:  "MOH audio uploaded successfully",
+		FilePath: filePath,
+		Duration: validationResult.Duration,
+		Warnings: validationResult.Warnings,
+	})
+}
+
+// ValidateMOHAudio validates a WAV file without saving it
+// POST /api/calls/moh/validate
+func (h *CallHandler) ValidateMOHAudio(w http.ResponseWriter, r *http.Request) {
+	// Max upload size: 10MB
+	const maxUploadSize = 10 * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		if err.Error() == "http: request body too large" {
+			WriteError(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE",
+				"File is too large. Maximum size is 10MB.", nil)
+			return
+		}
+		WriteValidationError(w, "Failed to parse form data", nil)
+		return
+	}
+
+	// Get the uploaded file
+	file, header, err := r.FormFile("audio")
+	if err != nil {
+		WriteValidationError(w, "No audio file provided. Use form field 'audio'.", nil)
+		return
+	}
+	defer file.Close()
+
+	// Check file extension
+	ext := filepath.Ext(header.Filename)
+	if ext != ".wav" && ext != ".WAV" {
+		WriteJSON(w, http.StatusOK, audio.WAVValidationResult{
+			Valid: false,
+			Error: &audio.WAVValidationError{
+				Code:    audio.ErrCodeInvalidFormat,
+				Message: "Only WAV files are supported",
+				Details: fmt.Sprintf("Got %s file, expected .wav", ext),
+			},
+		})
+		return
+	}
+
+	// Validate the WAV file
+	result := audio.ValidateWAV(file, header.Size)
+	WriteJSON(w, http.StatusOK, result)
 }
