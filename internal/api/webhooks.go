@@ -144,6 +144,12 @@ func (h *WebhookHandler) VoicemailRecording(w http.ResponseWriter, r *http.Reque
 	// Send notifications
 	go h.sendVoicemailNotification(voicemail)
 
+	// Trigger MWI notification for new voicemail
+	if voicemail.UserID != nil {
+		mwiNotifier := NewMWINotifier(h.deps)
+		go mwiNotifier.UpdateMWIForDID(r.Context(), *voicemail.UserID)
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

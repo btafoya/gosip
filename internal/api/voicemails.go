@@ -138,6 +138,17 @@ func (h *VoicemailHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get voicemail first to find the DID for MWI update
+	voicemail, err := h.deps.DB.Voicemails.GetByID(r.Context(), id)
+	if err != nil {
+		if err == db.ErrVoicemailNotFound {
+			WriteNotFoundError(w, "Voicemail")
+			return
+		}
+		WriteInternalError(w)
+		return
+	}
+
 	if err := h.deps.DB.Voicemails.MarkAsRead(r.Context(), id); err != nil {
 		if err == db.ErrVoicemailNotFound {
 			WriteNotFoundError(w, "Voicemail")
@@ -145,6 +156,12 @@ func (h *VoicemailHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteInternalError(w)
 		return
+	}
+
+	// Trigger MWI notification
+	if voicemail.UserID != nil {
+		mwiNotifier := NewMWINotifier(h.deps)
+		go mwiNotifier.UpdateMWIForDID(r.Context(), *voicemail.UserID)
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]string{"message": "Voicemail marked as read"})
@@ -158,9 +175,26 @@ func (h *VoicemailHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get voicemail first to find the DID for MWI update (before deleting)
+	voicemail, err := h.deps.DB.Voicemails.GetByID(r.Context(), id)
+	if err != nil {
+		if err == db.ErrVoicemailNotFound {
+			WriteNotFoundError(w, "Voicemail")
+			return
+		}
+		WriteInternalError(w)
+		return
+	}
+
 	if err := h.deps.DB.Voicemails.Delete(r.Context(), id); err != nil {
 		WriteInternalError(w)
 		return
+	}
+
+	// Trigger MWI notification
+	if voicemail.UserID != nil {
+		mwiNotifier := NewMWINotifier(h.deps)
+		go mwiNotifier.UpdateMWIForDID(r.Context(), *voicemail.UserID)
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]string{"message": "Voicemail deleted successfully"})

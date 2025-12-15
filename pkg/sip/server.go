@@ -35,6 +35,7 @@ type Server struct {
 	holdMgr     *HoldManager
 	transferMgr *TransferManager
 	mohMgr      *MOHManager
+	mwiMgr      *MWIManager
 
 	mu          sync.RWMutex
 	running     bool
@@ -73,6 +74,9 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 		AudioPath: cfg.MOHPath,
 	})
 
+	// Initialize MWI manager
+	mwiMgr := NewMWIManager(slog.Default())
+
 	server := &Server{
 		cfg:       cfg,
 		ua:        ua,
@@ -83,6 +87,7 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 		auth:      NewAuthenticator(database),
 		sessions:  sessions,
 		mohMgr:    mohMgr,
+		mwiMgr:    mwiMgr,
 	}
 
 	// Initialize hold manager (needs server reference)
@@ -90,6 +95,9 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 
 	// Initialize transfer manager (needs server reference)
 	server.transferMgr = NewTransferManager(server, sessions, server.holdMgr)
+
+	// Set server reference on MWI manager for sending NOTIFY
+	mwiMgr.SetServer(server)
 
 	return server, nil
 }
@@ -116,6 +124,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.srv.OnCancel(s.handleCancel)
 	s.srv.OnOptions(s.handleOptions)
 	s.srv.OnRefer(s.handleRefer)
+	s.srv.OnSubscribe(s.handleSubscribe)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Port)
 
@@ -140,6 +149,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start session cleanup goroutine
 	go s.cleanupTerminatedSessions(ctx)
+
+	// Start MWI subscription cleanup goroutine
+	go s.cleanupExpiredMWISubscriptions(ctx)
 
 	return nil
 }
@@ -258,4 +270,53 @@ func (s *Server) GetTransferManager() *TransferManager {
 // GetMOHManager returns the MOH manager for external access
 func (s *Server) GetMOHManager() *MOHManager {
 	return s.mohMgr
+}
+
+// GetMWIManager returns the MWI manager for external access
+func (s *Server) GetMWIManager() *MWIManager {
+	return s.mwiMgr
+}
+
+// cleanupExpiredMWISubscriptions periodically removes expired MWI subscriptions
+func (s *Server) cleanupExpiredMWISubscriptions(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.mwiMgr != nil {
+				s.mwiMgr.CleanupExpired()
+			}
+		}
+	}
+}
+
+// SendMWINotify sends an MWI NOTIFY message to a subscriber
+// This is called by MWIManager when state changes
+func (s *Server) SendMWINotify(ctx context.Context, sub *MWISubscription, body string) error {
+	if s.client == nil {
+		return fmt.Errorf("SIP client not initialized")
+	}
+
+	// Build NOTIFY request
+	// Note: In production, you would use sipgo.NewRequest and set proper headers
+	// For now, we'll log the notification attempt
+	slog.Info("Sending MWI NOTIFY",
+		slog.String("aor", sub.AOR),
+		slog.String("contact", sub.ContactURI),
+		slog.String("call_id", sub.CallID),
+		slog.Uint64("cseq", uint64(sub.CSeq)),
+	)
+
+	// TODO: Implement actual SIP NOTIFY sending using sipgo
+	// This requires building the NOTIFY request with:
+	// - Event: message-summary
+	// - Subscription-State: active;expires=<remaining>
+	// - Content-Type: application/simple-message-summary
+	// - Body: message-summary content
+
+	return nil
 }
