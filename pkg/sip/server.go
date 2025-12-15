@@ -14,8 +14,10 @@ import (
 
 // Config holds SIP server configuration
 type Config struct {
-	Port      int
-	UserAgent string
+	Port       int
+	UserAgent  string
+	MOHEnabled bool
+	MOHPath    string
 }
 
 // Server wraps sipgo server with GoSIP-specific functionality
@@ -27,6 +29,12 @@ type Server struct {
 	db        *db.DB
 	registrar *Registrar
 	auth      *Authenticator
+
+	// Call control managers
+	sessions    *SessionManager
+	holdMgr     *HoldManager
+	transferMgr *TransferManager
+	mohMgr      *MOHManager
 
 	mu          sync.RWMutex
 	running     bool
@@ -56,6 +64,15 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
+	// Initialize session manager
+	sessions := NewSessionManager()
+
+	// Initialize MOH manager
+	mohMgr := NewMOHManager(MOHConfig{
+		Enabled:   cfg.MOHEnabled,
+		AudioPath: cfg.MOHPath,
+	})
+
 	server := &Server{
 		cfg:       cfg,
 		ua:        ua,
@@ -64,7 +81,15 @@ func NewServer(cfg Config, database *db.DB) (*Server, error) {
 		db:        database,
 		registrar: NewRegistrar(database),
 		auth:      NewAuthenticator(database),
+		sessions:  sessions,
+		mohMgr:    mohMgr,
 	}
+
+	// Initialize hold manager (needs server reference)
+	server.holdMgr = NewHoldManager(server, sessions, mohMgr)
+
+	// Initialize transfer manager (needs server reference)
+	server.transferMgr = NewTransferManager(server, sessions, server.holdMgr)
 
 	return server, nil
 }
@@ -90,6 +115,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.srv.OnBye(s.handleBye)
 	s.srv.OnCancel(s.handleCancel)
 	s.srv.OnOptions(s.handleOptions)
+	s.srv.OnRefer(s.handleRefer)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Port)
 
@@ -111,6 +137,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start registration cleanup goroutine
 	go s.cleanupExpiredRegistrations(ctx)
+
+	// Start session cleanup goroutine
+	go s.cleanupTerminatedSessions(ctx)
 
 	return nil
 }
@@ -190,4 +219,43 @@ func (s *Server) decrementCallCount() {
 	if s.activeCalls > 0 {
 		s.activeCalls--
 	}
+}
+
+// cleanupTerminatedSessions periodically removes terminated sessions
+func (s *Server) cleanupTerminatedSessions(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Remove sessions terminated more than 10 minutes ago
+			count := s.sessions.Cleanup(ctx, 10*time.Minute)
+			if count > 0 {
+				slog.Debug("Cleaned up terminated sessions", "count", count)
+			}
+		}
+	}
+}
+
+// GetSessions returns the session manager for external access
+func (s *Server) GetSessions() *SessionManager {
+	return s.sessions
+}
+
+// GetHoldManager returns the hold manager for external access
+func (s *Server) GetHoldManager() *HoldManager {
+	return s.holdMgr
+}
+
+// GetTransferManager returns the transfer manager for external access
+func (s *Server) GetTransferManager() *TransferManager {
+	return s.transferMgr
+}
+
+// GetMOHManager returns the MOH manager for external access
+func (s *Server) GetMOHManager() *MOHManager {
+	return s.mohMgr
 }

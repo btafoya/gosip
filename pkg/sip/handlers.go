@@ -95,12 +95,25 @@ func (s *Server) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.CallSetupTimeout)
 	defer cancel()
 
+	callID := req.CallID().Value()
+
 	slog.Debug("Received INVITE request",
+		"call_id", callID,
 		"from", req.From().Address.String(),
 		"to", req.To().Address.String(),
 	)
 
-	// Send 100 Trying immediately
+	// Check if this is a re-INVITE for an existing session (hold/resume)
+	existingSession := s.sessions.Get(callID)
+	if existingSession != nil {
+		// This is a re-INVITE - handle via hold manager
+		if err := s.holdMgr.HandleReInvite(req, tx); err != nil {
+			slog.Error("Re-INVITE handling failed", "error", err, "call_id", callID)
+		}
+		return
+	}
+
+	// Send 100 Trying immediately for new call
 	s.sendResponse(tx, req, sip.StatusTrying, "Trying")
 
 	// Extract call information
@@ -117,15 +130,31 @@ func (s *Server) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 			s.sendResponse(tx, req, sip.StatusForbidden, "Forbidden")
 			return
 		}
-		slog.Debug("Authenticated outbound call", "device", device.Username)
+
+		// Create session for outbound call
+		session := NewCallSession(req, CallDirectionOutbound)
+		session.DeviceID = device.ID
+		s.sessions.Add(session)
+		s.incrementCallCount()
+
+		slog.Debug("Authenticated outbound call",
+			"device", device.Username,
+			"call_id", callID,
+		)
 		// TODO: Route outbound call through Twilio
 		s.sendResponse(tx, req, sip.StatusNotImplemented, "Outbound calls not yet implemented")
 		return
 	}
 
 	// External incoming call - should be from Twilio
+	// Create session for inbound call
+	session := NewCallSession(req, CallDirectionInbound)
+	s.sessions.Add(session)
+	s.incrementCallCount()
+
 	// TODO: Validate request is from Twilio and route to appropriate device
 	slog.Info("Incoming call",
+		"call_id", callID,
 		"from", fromURI.String(),
 		"to", toURI.String(),
 	)
@@ -142,20 +171,64 @@ func (s *Server) handleAck(req *sip.Request, tx sip.ServerTransaction) {
 
 // handleBye processes BYE requests to end calls
 func (s *Server) handleBye(req *sip.Request, tx sip.ServerTransaction) {
-	slog.Debug("Received BYE request", "call_id", req.CallID().Value())
+	callID := req.CallID().Value()
+	slog.Debug("Received BYE request", "call_id", callID)
 
-	// TODO: Handle call termination, update CDR
+	// Find and terminate the session
+	session := s.sessions.Get(callID)
+	if session != nil {
+		// Stop MOH if active
+		if s.mohMgr != nil && s.mohMgr.IsActive(callID) {
+			s.mohMgr.Stop(callID)
+		}
+
+		// Update session state
+		if err := session.SetState(CallStateTerminated); err != nil {
+			slog.Warn("Failed to set terminated state", "error", err, "call_id", callID)
+		}
+
+		s.decrementCallCount()
+
+		slog.Info("Call terminated",
+			"call_id", callID,
+			"duration", session.Duration(),
+		)
+
+		// TODO: Update CDR record
+	}
 
 	s.sendResponse(tx, req, sip.StatusOK, "OK")
 }
 
 // handleCancel processes CANCEL requests
 func (s *Server) handleCancel(req *sip.Request, tx sip.ServerTransaction) {
-	slog.Debug("Received CANCEL request", "call_id", req.CallID().Value())
+	callID := req.CallID().Value()
+	slog.Debug("Received CANCEL request", "call_id", callID)
 
-	// TODO: Handle call cancellation
+	// Find and terminate the session if in ringing state
+	session := s.sessions.Get(callID)
+	if session != nil {
+		if session.GetState() == CallStateRinging {
+			if err := session.SetState(CallStateTerminated); err != nil {
+				slog.Warn("Failed to set terminated state", "error", err, "call_id", callID)
+			}
+			s.decrementCallCount()
+			slog.Info("Call cancelled", "call_id", callID)
+		}
+	}
 
 	s.sendResponse(tx, req, sip.StatusOK, "OK")
+}
+
+// handleRefer processes REFER requests for call transfers
+func (s *Server) handleRefer(req *sip.Request, tx sip.ServerTransaction) {
+	callID := req.CallID().Value()
+	slog.Debug("Received REFER request", "call_id", callID)
+
+	// Delegate to transfer manager
+	if err := s.transferMgr.HandleRefer(req, tx); err != nil {
+		slog.Error("REFER handling failed", "error", err, "call_id", callID)
+	}
 }
 
 // handleOptions processes OPTIONS requests (health check / capabilities)
@@ -163,9 +236,10 @@ func (s *Server) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
 	slog.Debug("Received OPTIONS request", "from", req.From().Address.String())
 
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
-	res.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE, REGISTER"))
+	res.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE, REGISTER, REFER, NOTIFY"))
 	res.AppendHeader(sip.NewHeader("Accept", "application/sdp"))
 	res.AppendHeader(sip.NewHeader("Accept-Language", "en"))
+	res.AppendHeader(sip.NewHeader("Supported", "replaces, timer"))
 
 	if err := tx.Respond(res); err != nil {
 		slog.Error("Failed to send OPTIONS response", "error", err)
