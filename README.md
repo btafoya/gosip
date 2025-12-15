@@ -270,7 +270,6 @@ gosip/
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Development roadmap with P0 specifications |
 | [SCOPE_ALIGNMENT.md](SCOPE_ALIGNMENT.md) | Documentation alignment and scope analysis |
 | [SPEC_PANEL_REVIEW.md](SPEC_PANEL_REVIEW.md) | Expert specification review |
-| [CLAUDE.md](CLAUDE.md) | AI assistant guidelines |
 | [docs/tutorials/](docs/tutorials/) | SIP protocol tutorials and reference |
 
 ## Contributing
