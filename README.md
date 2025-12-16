@@ -185,14 +185,14 @@ gosip/
 ├── cmd/gosip/           # Application entry point
 ├── internal/
 │   ├── api/             # REST API handlers
-│   ├── auth/            # Authentication (sessions, bcrypt)
+│   ├── audio/           # Audio file processing (WAV validation)
 │   ├── config/          # Runtime configuration & constants
 │   ├── db/              # SQLite repository layer
+│   │   └── migrations/  # Embedded SQL migrations
 │   ├── models/          # Domain models
 │   ├── notifications/   # Email & push notifications
 │   ├── rules/           # Call routing engine
-│   ├── twilio/          # Twilio API client with retry logic
-│   └── webhooks/        # Twilio webhook handlers
+│   └── twilio/          # Twilio API client with retry logic
 ├── pkg/sip/             # SIP integration (sipgo wrapper)
 │   ├── server.go        # sipgo server setup
 │   ├── handlers.go      # REGISTER, INVITE, BYE, REFER handlers
@@ -202,13 +202,22 @@ gosip/
 │   ├── hold.go          # Call hold/resume
 │   ├── transfer.go      # Call transfer (attended/blind)
 │   ├── moh.go           # Music on hold
-│   └── mwi.go           # Message waiting indicator
+│   ├── mwi.go           # Message waiting indicator
+│   ├── certmanager.go   # TLS certificate management (ACME/manual)
+│   ├── srtp.go          # SRTP media encryption
+│   └── zrtp.go          # ZRTP end-to-end encryption
 ├── frontend/            # Vue 3 SPA
 │   ├── src/
 │   │   ├── views/       # Page components
+│   │   ├── stores/      # Pinia state management
 │   │   └── api/         # API client
 │   └── tailwind.config.js
-├── migrations/          # SQLite schema migrations
+├── claudedocs/          # Generated documentation
+│   ├── PROJECT_INDEX.md # Complete knowledge base
+│   └── ARCHITECTURE.md  # System architecture
+├── docs/                # Reference documentation
+│   ├── API.md           # API documentation
+│   └── tutorials/       # SIP protocol tutorials
 ├── docker-compose.yml
 └── Dockerfile
 ```
@@ -275,12 +284,26 @@ gosip/
 
 ## Documentation
 
+### Project Documentation
 | Document | Description |
 |----------|-------------|
+| [claudedocs/PROJECT_INDEX.md](claudedocs/PROJECT_INDEX.md) | Complete knowledge base with package reference and API docs |
+| [claudedocs/ARCHITECTURE.md](claudedocs/ARCHITECTURE.md) | System architecture diagrams and component relationships |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Complete functional and technical specification |
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Development roadmap with P0 specifications |
+
+### Security Documentation
+| Document | Description |
+|----------|-------------|
+| [claudedocs/TLS_ENCRYPTION_IMPLEMENTATION_PLAN.md](claudedocs/TLS_ENCRYPTION_IMPLEMENTATION_PLAN.md) | TLS/SRTP/ZRTP encryption implementation |
+| [claudedocs/SECURITY_FIX_SESSION_TOKENS.md](claudedocs/SECURITY_FIX_SESSION_TOKENS.md) | Session token security hardening |
+
+### Reference
+| Document | Description |
+|----------|-------------|
 | [SCOPE_ALIGNMENT.md](SCOPE_ALIGNMENT.md) | Documentation alignment and scope analysis |
 | [SPEC_PANEL_REVIEW.md](SPEC_PANEL_REVIEW.md) | Expert specification review |
+| [docs/API.md](docs/API.md) | API endpoint documentation |
 | [docs/tutorials/](docs/tutorials/) | SIP protocol tutorials and reference |
 
 ## Contributing
