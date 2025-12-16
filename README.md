@@ -286,6 +286,12 @@ gosip/
 
 ## Documentation
 
+### For Users
+| Document | Description |
+|----------|-------------|
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | End user guide for voicemail, messaging, calls, and devices |
+
+### For Developers
 | Document | Description |
 |----------|-------------|
 | [claudedocs/PROJECT_INDEX.md](claudedocs/PROJECT_INDEX.md) | Complete knowledge base with package reference and API docs |
