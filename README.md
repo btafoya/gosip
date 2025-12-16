@@ -301,8 +301,6 @@ gosip/
 ### Reference
 | Document | Description |
 |----------|-------------|
-| [SCOPE_ALIGNMENT.md](SCOPE_ALIGNMENT.md) | Documentation alignment and scope analysis |
-| [SPEC_PANEL_REVIEW.md](SPEC_PANEL_REVIEW.md) | Expert specification review |
 | [docs/API.md](docs/API.md) | API endpoint documentation |
 | [docs/tutorials/](docs/tutorials/) | SIP protocol tutorials and reference |
 
