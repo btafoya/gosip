@@ -630,18 +630,140 @@ GET /api/system/status
 ```
 Returns SIP server status, Twilio connection health, etc.
 
+---
+
+## Backup Management (Admin Only)
+
+All backup endpoints require admin authentication.
+
 ### Create Backup
 ```http
-POST /api/system/backup
+POST /api/system/backups
+POST /api/system/backup  (legacy)
+```
+Creates a database backup using SQLite VACUUM INTO for consistent hot backups.
+
+**Response:**
+```json
+{
+  "filename": "backup_20251215_143022.db",
+  "size": 524288,
+  "created_at": "2025-12-15T14:30:22Z"
+}
+```
+
+### List Backups
+```http
+GET /api/system/backups
+```
+Returns list of available backup files sorted by creation time (newest first).
+
+**Response:**
+```json
+[
+  {
+    "filename": "backup_20251215_143022.db",
+    "size": 524288,
+    "created_at": "2025-12-15T14:30:22Z"
+  }
+]
+```
+
+### Get Backup Info
+```http
+GET /api/system/backups/info?filename=backup_20251215_143022.db
+```
+Returns information about a specific backup file.
+
+**Response:**
+```json
+{
+  "filename": "backup_20251215_143022.db",
+  "size": 524288,
+  "created_at": "2025-12-15T14:30:22Z"
+}
+```
+
+### Verify Backup
+```http
+POST /api/system/backups/verify
+Content-Type: application/json
+
+{
+  "filename": "backup_20251215_143022.db"
+}
+```
+Verifies backup integrity using SQLite PRAGMA integrity_check.
+
+**Response:**
+```json
+{
+  "filename": "backup_20251215_143022.db",
+  "valid": true,
+  "message": "Backup integrity verified successfully"
+}
 ```
 
 ### Restore Backup
 ```http
-POST /api/system/restore
-Content-Type: multipart/form-data
+POST /api/system/backups/restore
+POST /api/system/restore  (legacy)
+Content-Type: application/json
 
-file: <backup file>
+{
+  "filename": "backup_20251215_143022.db"
+}
 ```
+Restores database from a backup file. Creates a pre-restore backup automatically.
+
+**Warning:** This operation is destructive. The current database will be replaced.
+
+**Response:**
+```json
+{
+  "message": "Backup restored successfully"
+}
+```
+
+### Delete Backup
+```http
+POST /api/system/backups/delete
+Content-Type: application/json
+
+{
+  "filename": "backup_20251215_143022.db"
+}
+```
+Deletes a backup file.
+
+**Response:**
+```json
+{
+  "message": "Backup deleted successfully"
+}
+```
+
+### Cleanup Old Backups
+```http
+POST /api/system/backups/cleanup
+Content-Type: application/json
+
+{
+  "retention_days": 30
+}
+```
+Removes backup files older than the specified retention period.
+
+**Response:**
+```json
+{
+  "message": "Old backups cleaned successfully",
+  "deleted_count": 5,
+  "retention_days": 30
+}
+```
+
+---
 
 ### Toggle DND (Do Not Disturb)
 ```http

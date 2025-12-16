@@ -357,6 +357,101 @@ func (h *SystemHandler) ListBackups(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, backups)
 }
 
+// GetBackup returns information about a specific backup
+func (h *SystemHandler) GetBackup(w http.ResponseWriter, r *http.Request) {
+	filename := r.URL.Query().Get("filename")
+	if filename == "" {
+		WriteValidationError(w, "Filename is required", []FieldError{{Field: "filename", Message: "Filename is required"}})
+		return
+	}
+
+	backup, err := h.deps.DB.GetBackup(r.Context(), filename)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, ErrCodeNotFound, err.Error(), nil)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, backup)
+}
+
+// VerifyBackup checks the integrity of a backup file
+func (h *SystemHandler) VerifyBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	if req.Filename == "" {
+		WriteValidationError(w, "Filename is required", []FieldError{{Field: "filename", Message: "Filename is required"}})
+		return
+	}
+
+	if err := h.deps.DB.VerifyBackup(r.Context(), req.Filename); err != nil {
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, err.Error(), nil)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"filename": req.Filename,
+		"valid":    true,
+		"message":  "Backup integrity verified successfully",
+	})
+}
+
+// DeleteBackup removes a backup file
+func (h *SystemHandler) DeleteBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	if req.Filename == "" {
+		WriteValidationError(w, "Filename is required", []FieldError{{Field: "filename", Message: "Filename is required"}})
+		return
+	}
+
+	if err := h.deps.DB.DeleteBackup(r.Context(), req.Filename); err != nil {
+		WriteError(w, http.StatusNotFound, ErrCodeNotFound, err.Error(), nil)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"message": "Backup deleted successfully"})
+}
+
+// CleanOldBackups removes backup files older than the specified retention period
+func (h *SystemHandler) CleanOldBackups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RetentionDays int `json:"retention_days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	// Default to 30 days if not specified
+	if req.RetentionDays <= 0 {
+		req.RetentionDays = 30
+	}
+
+	deletedCount, err := h.deps.DB.CleanOldBackups(r.Context(), req.RetentionDays)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error(), nil)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message":        "Old backups cleaned successfully",
+		"deleted_count":  deletedCount,
+		"retention_days": req.RetentionDays,
+	})
+}
+
 // GetSetupStatus returns whether setup is completed
 func (h *SystemHandler) GetSetupStatus(w http.ResponseWriter, r *http.Request) {
 	setupCompleted, _ := h.deps.DB.Config.Get(r.Context(), "setup_completed")

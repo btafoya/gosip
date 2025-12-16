@@ -218,9 +218,22 @@ func NewRouter(deps *Dependencies) chi.Router {
 				r.Route("/system", func(r chi.Router) {
 					r.Get("/config", systemHandler.GetConfig)
 					r.Put("/config", systemHandler.UpdateConfig)
+					r.Get("/status", systemHandler.GetStatus)
+
+					// Backup management
+					r.Route("/backups", func(r chi.Router) {
+						r.Get("/", systemHandler.ListBackups)
+						r.Post("/", systemHandler.CreateBackup)
+						r.Get("/info", systemHandler.GetBackup)
+						r.Post("/verify", systemHandler.VerifyBackup)
+						r.Post("/restore", systemHandler.RestoreBackup)
+						r.Post("/delete", systemHandler.DeleteBackup)
+						r.Post("/cleanup", systemHandler.CleanOldBackups)
+					})
+
+					// Legacy backup endpoints for backwards compatibility
 					r.Post("/backup", systemHandler.CreateBackup)
 					r.Post("/restore", systemHandler.RestoreBackup)
-					r.Get("/status", systemHandler.GetStatus)
 
 					// TLS/Encryption configuration
 					r.Route("/tls", func(r chi.Router) {
