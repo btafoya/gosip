@@ -11,6 +11,7 @@ import (
 	"github.com/btafoya/gosip/internal/config"
 	"github.com/btafoya/gosip/internal/db"
 	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 )
 
 // Config holds SIP server configuration
@@ -409,24 +410,79 @@ func (s *Server) SendMWINotify(ctx context.Context, sub *MWISubscription, body s
 		return fmt.Errorf("SIP client not initialized")
 	}
 
-	// Build NOTIFY request
-	// Note: In production, you would use sipgo.NewRequest and set proper headers
-	// For now, we'll log the notification attempt
+	// Calculate remaining subscription time
+	remaining := int(time.Until(sub.ExpiresAt).Seconds())
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	// Build NOTIFY request per RFC 3265 (SIP Events) and RFC 3842 (MWI)
+	// Note: The actual destination is derived from the Contact header
+	notifyReq := sip.NewRequest(sip.NOTIFY, sip.Uri{})
+
+	// Add Contact header for routing
+	notifyReq.AppendHeader(sip.NewHeader("Contact", fmt.Sprintf("<%s>", sub.ContactURI)))
+
+	// Set the essential headers
+	notifyReq.AppendHeader(sip.NewHeader("Call-ID", sub.CallID))
+	notifyReq.AppendHeader(sip.NewHeader("From", fmt.Sprintf("<%s>;tag=%s", sub.FromURI, sub.FromTag)))
+	notifyReq.AppendHeader(sip.NewHeader("To", fmt.Sprintf("<%s>;tag=%s", sub.ToURI, sub.ToTag)))
+	notifyReq.AppendHeader(sip.NewHeader("CSeq", fmt.Sprintf("%d NOTIFY", sub.CSeq)))
+
+	// Event header per RFC 3265
+	notifyReq.AppendHeader(sip.NewHeader("Event", "message-summary"))
+
+	// Subscription-State header per RFC 3265
+	subscriptionState := "active"
+	if remaining <= 0 {
+		subscriptionState = "terminated;reason=timeout"
+	} else {
+		subscriptionState = fmt.Sprintf("active;expires=%d", remaining)
+	}
+	notifyReq.AppendHeader(sip.NewHeader("Subscription-State", subscriptionState))
+
+	// Content-Type for MWI body per RFC 3842
+	notifyReq.AppendHeader(sip.NewHeader("Content-Type", "application/simple-message-summary"))
+
+	// Set the MWI body
+	notifyReq.SetBody([]byte(body))
+
 	slog.Info("Sending MWI NOTIFY",
 		slog.String("aor", sub.AOR),
 		slog.String("contact", sub.ContactURI),
 		slog.String("call_id", sub.CallID),
 		slog.Uint64("cseq", uint64(sub.CSeq)),
+		slog.Int("expires", remaining),
 	)
 
-	// TODO: Implement actual SIP NOTIFY sending using sipgo
-	// This requires building the NOTIFY request with:
-	// - Event: message-summary
-	// - Subscription-State: active;expires=<remaining>
-	// - Content-Type: application/simple-message-summary
-	// - Body: message-summary content
+	// Send the NOTIFY request
+	tx, err := s.client.TransactionRequest(ctx, notifyReq)
+	if err != nil {
+		return fmt.Errorf("failed to send MWI NOTIFY: %w", err)
+	}
+	defer tx.Terminate()
 
-	return nil
+	// Wait for response
+	select {
+	case res := <-tx.Responses():
+		if res.StatusCode >= 200 && res.StatusCode < 300 {
+			slog.Debug("MWI NOTIFY accepted",
+				slog.String("aor", sub.AOR),
+				slog.Int("status", int(res.StatusCode)),
+			)
+			return nil
+		}
+		slog.Warn("MWI NOTIFY rejected",
+			slog.String("aor", sub.AOR),
+			slog.Int("status", int(res.StatusCode)),
+			slog.String("reason", res.Reason),
+		)
+		return fmt.Errorf("NOTIFY rejected: %d %s", res.StatusCode, res.Reason)
+	case <-tx.Done():
+		return fmt.Errorf("NOTIFY transaction terminated without response")
+	case <-ctx.Done():
+		return fmt.Errorf("NOTIFY timeout: %w", ctx.Err())
+	}
 }
 
 // GetCertManager returns the certificate manager for external access

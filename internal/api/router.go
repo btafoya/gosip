@@ -20,9 +20,9 @@ func NewRouter(deps *Dependencies) chi.Router {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 
-	// CORS configuration
+	// CORS configuration with secure origin restrictions
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"}, // TODO: Configure for production
+		AllowedOrigins:   deps.Config.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},

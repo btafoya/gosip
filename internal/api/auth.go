@@ -100,8 +100,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Update last login
 	h.deps.DB.Users.UpdateLastLogin(r.Context(), user.ID)
 
-	// Create session
-	token, err := createSession(user.ID)
+	// Create session with persistent storage
+	token, err := createSessionWithRequest(r.Context(), h.deps.DB, user.ID, r.UserAgent(), r.RemoteAddr)
 	if err != nil {
 		WriteInternalError(w)
 		return
@@ -126,10 +126,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Logout handles user logout
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	// Get session from cookie
+	// Get session from cookie and delete from persistent storage
 	cookie, err := r.Cookie("session")
 	if err == nil {
-		deleteSession(cookie.Value)
+		deleteSessionWithDB(r.Context(), h.deps.DB, cookie.Value)
 	}
 
 	// Clear cookie

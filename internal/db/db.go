@@ -7,6 +7,8 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,6 +34,7 @@ type DB struct {
 	Messages      *MessageRepository
 	AutoReplies   *AutoReplyRepository
 	Config        *ConfigRepository
+	Sessions      *SessionRepository
 
 	// Provisioning repositories
 	ProvisioningTokens   *ProvisioningTokenRepository
@@ -77,6 +80,7 @@ func New(dbPath string) (*DB, error) {
 	db.Messages = NewMessageRepository(conn)
 	db.AutoReplies = NewAutoReplyRepository(conn)
 	db.Config = NewConfigRepository(conn)
+	db.Sessions = NewSessionRepository(conn)
 
 	// Provisioning repositories
 	db.ProvisioningTokens = NewProvisioningTokenRepository(conn)
@@ -188,14 +192,52 @@ type BackupInfo struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// validateBackupPath validates and sanitizes a backup file path to prevent SQL injection
+// and path traversal attacks
+func validateBackupPath(backupPath string) error {
+	// Normalize the path to remove any redundant separators or relative components
+	cleanPath := filepath.Clean(backupPath)
+
+	// Ensure the path is absolute
+	if !filepath.IsAbs(cleanPath) {
+		return fmt.Errorf("backup path must be absolute: %s", backupPath)
+	}
+
+	// Check for directory traversal attempts
+	if strings.Contains(backupPath, "..") {
+		return fmt.Errorf("backup path cannot contain directory traversal: %s", backupPath)
+	}
+
+	// Validate only safe characters (alphanumeric, underscores, hyphens, slashes, dots)
+	// This prevents SQL injection through special characters
+	safePathPattern := regexp.MustCompile(`^[a-zA-Z0-9_/.\-]+$`)
+	if !safePathPattern.MatchString(cleanPath) {
+		return fmt.Errorf("backup path contains invalid characters: %s", backupPath)
+	}
+
+	return nil
+}
+
 // CreateBackup creates a backup of the database
 func (db *DB) CreateBackup(ctx context.Context) (string, int64, error) {
 	// Generate backup filename
 	filename := fmt.Sprintf("backup_%s.db", time.Now().Format("20060102_150405"))
 
-	// For SQLite, we can use the backup API or VACUUM INTO
-	backupPath := filename
-	_, err := db.conn.ExecContext(ctx, fmt.Sprintf("VACUUM INTO '%s'", backupPath))
+	// Get absolute path for the backup
+	backupPath, err := filepath.Abs(filename)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Validate the backup path to prevent SQL injection and path traversal
+	if err := validateBackupPath(backupPath); err != nil {
+		return "", 0, fmt.Errorf("invalid backup path: %w", err)
+	}
+
+	// Use VACUUM INTO with validated path
+	// The path is now sanitized, but we still use proper SQL formatting
+	query := "VACUUM INTO ?"
+	_, err = db.conn.ExecContext(ctx, query, backupPath)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to create backup: %w", err)
 	}

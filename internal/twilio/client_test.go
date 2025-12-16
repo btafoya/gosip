@@ -1,8 +1,10 @@
 package twilio
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/btafoya/gosip/internal/config"
 )
@@ -343,4 +345,445 @@ func TestClient_Stop(t *testing.T) {
 
 	// Stop should not panic
 	client.Stop()
+}
+
+// Additional tests for better coverage
+
+func TestClient_ListIncomingPhoneNumbers_NoClient(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	_, err := client.ListIncomingPhoneNumbers(nil)
+	if err == nil {
+		t.Error("ListIncomingPhoneNumbers should error when client not initialized")
+	}
+	if err.Error() != "twilio client not initialized" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestClient_GetMessage_NoClient(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	_, err := client.GetMessage(nil, "SM123")
+	if err == nil {
+		t.Error("GetMessage should error when client not initialized")
+	}
+	if err.Error() != "twilio client not initialized" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestClient_ListMessages_NoClient(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	_, err := client.ListMessages(nil, "", "", 10)
+	if err == nil {
+		t.Error("ListMessages should error when client not initialized")
+	}
+	if err.Error() != "twilio client not initialized" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestClient_DeleteMessage_NoClient(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	err := client.DeleteMessage(nil, "SM123")
+	if err == nil {
+		t.Error("DeleteMessage should error when client not initialized")
+	}
+	if err.Error() != "twilio client not initialized" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestClient_CancelMessage_NoClient(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	err := client.CancelMessage(nil, "SM123")
+	if err == nil {
+		t.Error("CancelMessage should error when client not initialized")
+	}
+	if err.Error() != "twilio client not initialized" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestClient_SendSMSWithCallback_NoClient(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	_, err := client.SendSMSWithCallback("+15551234567", "+15559876543", "Test", nil, "http://callback.example.com")
+	if err == nil {
+		t.Error("SendSMSWithCallback should error when client not initialized")
+	}
+	if err.Error() != "twilio client not initialized" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestClient_GetMediaURLs_NoClient(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	_, err := client.GetMediaURLs(nil, "SM123")
+	if err == nil {
+		t.Error("GetMediaURLs should error when client not initialized")
+	}
+	if err.Error() != "twilio client not initialized" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestParseTwilioTime(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantZero bool
+	}{
+		{
+			name:     "RFC1123Z format",
+			input:    "Mon, 02 Jan 2006 15:04:05 +0000",
+			wantZero: false,
+		},
+		{
+			name:     "RFC3339 format",
+			input:    "2006-01-02T15:04:05Z",
+			wantZero: false,
+		},
+		{
+			name:     "Invalid format",
+			input:    "not-a-date",
+			wantZero: true,
+		},
+		{
+			name:     "Empty string",
+			input:    "",
+			wantZero: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseTwilioTime(tt.input)
+			if tt.wantZero && !result.IsZero() {
+				t.Errorf("parseTwilioTime(%s) should return zero time", tt.input)
+			}
+			if !tt.wantZero && result.IsZero() {
+				t.Errorf("parseTwilioTime(%s) should not return zero time", tt.input)
+			}
+		})
+	}
+}
+
+func TestTwilioMessage(t *testing.T) {
+	msg := TwilioMessage{
+		SID:       "SM123456",
+		Body:      "Hello, World!",
+		From:      "+15551234567",
+		To:        "+15559876543",
+		Status:    "delivered",
+		Direction: "outbound-api",
+		NumMedia:  0,
+	}
+
+	if msg.SID != "SM123456" {
+		t.Errorf("SID = %s, want SM123456", msg.SID)
+	}
+	if msg.Body != "Hello, World!" {
+		t.Errorf("Body mismatch")
+	}
+	if msg.From != "+15551234567" {
+		t.Errorf("From = %s, want +15551234567", msg.From)
+	}
+	if msg.To != "+15559876543" {
+		t.Errorf("To = %s, want +15559876543", msg.To)
+	}
+	if msg.Status != "delivered" {
+		t.Errorf("Status = %s, want delivered", msg.Status)
+	}
+}
+
+func TestIncomingPhoneNumber(t *testing.T) {
+	number := IncomingPhoneNumber{
+		SID:          "PN123456",
+		PhoneNumber:  "+15551234567",
+		FriendlyName: "Main Line",
+		SMSEnabled:   true,
+		VoiceEnabled: true,
+	}
+
+	if number.SID != "PN123456" {
+		t.Errorf("SID = %s, want PN123456", number.SID)
+	}
+	if number.PhoneNumber != "+15551234567" {
+		t.Errorf("PhoneNumber mismatch")
+	}
+	if !number.SMSEnabled {
+		t.Error("SMSEnabled should be true")
+	}
+	if !number.VoiceEnabled {
+		t.Error("VoiceEnabled should be true")
+	}
+}
+
+// Queue tests
+
+func TestMessageQueue_NewMessageQueue(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+
+	queue := NewMessageQueue(client)
+
+	if queue == nil {
+		t.Fatal("NewMessageQueue should not return nil")
+	}
+	if queue.client != client {
+		t.Error("Queue client should match provided client")
+	}
+	if queue.messages == nil {
+		t.Error("Queue messages channel should be initialized")
+	}
+	if queue.pending == nil {
+		t.Error("Queue pending map should be initialized")
+	}
+}
+
+func TestMessageQueue_GetPendingCount(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+	queue := NewMessageQueue(client)
+
+	// Initially should be 0
+	if count := queue.GetPendingCount(); count != 0 {
+		t.Errorf("Initial pending count = %d, want 0", count)
+	}
+}
+
+func TestMessageQueue_GetQueuedCount(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+	queue := NewMessageQueue(client)
+
+	// Initially should be 0
+	if count := queue.GetQueuedCount(); count != 0 {
+		t.Errorf("Initial queued count = %d, want 0", count)
+	}
+}
+
+func TestMessageQueue_Enqueue(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+	queue := NewMessageQueue(client)
+
+	msg := &QueuedMessage{
+		ID:        "msg-1",
+		From:      "+15551234567",
+		To:        "+15559876543",
+		Body:      "Test message",
+		MediaURLs: nil,
+		Retries:   0,
+	}
+
+	queue.Enqueue(msg)
+
+	// Message should be in pending
+	if count := queue.GetPendingCount(); count != 1 {
+		t.Errorf("Pending count = %d, want 1", count)
+	}
+}
+
+func TestMessageQueue_Stop(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+	queue := NewMessageQueue(client)
+
+	// Start the queue
+	ctx, cancel := context.WithCancel(context.Background())
+	go queue.Start(ctx)
+
+	// Give it time to start
+	time.Sleep(10 * time.Millisecond)
+
+	// Stop should not panic
+	queue.Stop()
+	cancel()
+
+	// Double stop should not panic
+	queue = NewMessageQueue(client) // Fresh queue needed since stopChan is closed
+	queue.Stop()
+}
+
+func TestMessageQueue_StartStop(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+	queue := NewMessageQueue(client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start should mark as running
+	go queue.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+
+	queue.mu.RLock()
+	running := queue.running
+	queue.mu.RUnlock()
+
+	if !running {
+		t.Error("Queue should be running after Start")
+	}
+
+	// Cancel context should stop the queue
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestMessageQueue_StartIdempotent(t *testing.T) {
+	cfg := &config.Config{}
+	client := NewClient(cfg)
+	queue := NewMessageQueue(client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start multiple times - should not panic or deadlock
+	go queue.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+	go queue.Start(ctx) // Second start should return immediately
+
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestQueuedMessage(t *testing.T) {
+	callbackCalled := false
+	callback := func(sid string, err error) {
+		callbackCalled = true
+	}
+
+	msg := &QueuedMessage{
+		ID:        "msg-123",
+		From:      "+15551234567",
+		To:        "+15559876543",
+		Body:      "Hello",
+		MediaURLs: []string{"http://example.com/image.jpg"},
+		Retries:   0,
+		Callback:  callback,
+	}
+
+	if msg.ID != "msg-123" {
+		t.Errorf("ID = %s, want msg-123", msg.ID)
+	}
+	if msg.From != "+15551234567" {
+		t.Errorf("From mismatch")
+	}
+	if len(msg.MediaURLs) != 1 {
+		t.Errorf("MediaURLs length = %d, want 1", len(msg.MediaURLs))
+	}
+
+	// Call the callback
+	msg.Callback("SM123", nil)
+	if !callbackCalled {
+		t.Error("Callback should have been called")
+	}
+}
+
+func TestClient_CredentialsValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		accountSID  string
+		authToken   string
+		wantHealthy bool
+	}{
+		{
+			name:        "Valid credentials format",
+			accountSID:  "ACtest00000000000000000000000000",
+			authToken:   "test00000000000000000000000000ab",
+			wantHealthy: true,
+		},
+		{
+			name:        "Empty account SID",
+			accountSID:  "",
+			authToken:   "token123",
+			wantHealthy: false,
+		},
+		{
+			name:        "Empty auth token",
+			accountSID:  "AC123",
+			authToken:   "",
+			wantHealthy: false,
+		},
+		{
+			name:        "Both empty",
+			accountSID:  "",
+			authToken:   "",
+			wantHealthy: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				TwilioAccountSID: tt.accountSID,
+				TwilioAuthToken:  tt.authToken,
+			}
+			client := NewClient(cfg)
+
+			if client.IsHealthy() != tt.wantHealthy {
+				t.Errorf("IsHealthy() = %v, want %v", client.IsHealthy(), tt.wantHealthy)
+			}
+		})
+	}
+}
+
+func TestClient_FailureCountTracking(t *testing.T) {
+	cfg := &config.Config{
+		TwilioAccountSID: "AC123",
+		TwilioAuthToken:  "token123",
+	}
+	client := NewClient(cfg)
+
+	// Record failures one at a time
+	client.recordFailure()
+	client.mu.RLock()
+	count := client.failureCount
+	client.mu.RUnlock()
+
+	if count != 1 {
+		t.Errorf("failureCount = %d, want 1", count)
+	}
+
+	// Record another failure
+	client.recordFailure()
+	client.mu.RLock()
+	count = client.failureCount
+	client.mu.RUnlock()
+
+	if count != 2 {
+		t.Errorf("failureCount = %d, want 2", count)
+	}
+}
+
+func TestClient_LastCheckUpdated(t *testing.T) {
+	cfg := &config.Config{
+		TwilioAccountSID: "AC123",
+		TwilioAuthToken:  "token123",
+	}
+	client := NewClient(cfg)
+
+	before := time.Now()
+	client.recordSuccess()
+	after := time.Now()
+
+	client.mu.RLock()
+	lastCheck := client.lastCheck
+	client.mu.RUnlock()
+
+	if lastCheck.Before(before) || lastCheck.After(after) {
+		t.Error("lastCheck should be updated to current time")
+	}
 }

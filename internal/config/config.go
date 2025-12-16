@@ -93,6 +93,9 @@ type Config struct {
 	RecordingEnabled bool
 	DebugMode        bool
 
+	// CORS configuration
+	CORSOrigins []string // Allowed CORS origins
+
 	// TLS configuration
 	TLS *TLSConfig
 
@@ -129,6 +132,14 @@ func Load() *Config {
 
 		RecordingEnabled: getEnvBool("GOSIP_RECORDING_ENABLED", true),
 		DebugMode:        getEnvBool("GOSIP_DEBUG", false),
+
+		// CORS configuration with secure defaults for development
+		CORSOrigins: getEnvStringSlice("GOSIP_CORS_ORIGINS", []string{
+			"http://localhost:3000",
+			"http://localhost:8080",
+			"http://127.0.0.1:3000",
+			"http://127.0.0.1:8080",
+		}),
 	}
 
 	// Load TLS configuration
@@ -248,4 +259,78 @@ func getEnvBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+// getEnvStringSlice parses a comma-separated environment variable into a string slice
+func getEnvStringSlice(key string, defaultValue []string) []string {
+	if value := os.Getenv(key); value != "" {
+		// Split on comma and trim whitespace from each element
+		parts := make([]string, 0)
+		for _, part := range splitAndTrim(value, ",") {
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+		if len(parts) > 0 {
+			return parts
+		}
+	}
+	return defaultValue
+}
+
+// splitAndTrim splits a string by a delimiter and trims whitespace from each part
+func splitAndTrim(s, delimiter string) []string {
+	parts := make([]string, 0)
+	for _, part := range splitString(s, delimiter) {
+		trimmed := trimSpace(part)
+		parts = append(parts, trimmed)
+	}
+	return parts
+}
+
+// splitString splits a string by a delimiter
+func splitString(s, delimiter string) []string {
+	if s == "" {
+		return []string{}
+	}
+
+	parts := []string{}
+	current := ""
+	delimLen := len(delimiter)
+
+	for i := 0; i < len(s); i++ {
+		if i+delimLen <= len(s) && s[i:i+delimLen] == delimiter {
+			parts = append(parts, current)
+			current = ""
+			i += delimLen - 1
+		} else {
+			current += string(s[i])
+		}
+	}
+	parts = append(parts, current)
+
+	return parts
+}
+
+// trimSpace removes leading and trailing whitespace
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+
+	// Trim leading whitespace
+	for start < end && isSpace(s[start]) {
+		start++
+	}
+
+	// Trim trailing whitespace
+	for end > start && isSpace(s[end-1]) {
+		end--
+	}
+
+	return s[start:end]
+}
+
+// isSpace checks if a byte is whitespace
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
