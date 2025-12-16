@@ -212,9 +212,11 @@ gosip/
 │   │   ├── stores/      # Pinia state management
 │   │   └── api/         # API client
 │   └── tailwind.config.js
-├── claudedocs/          # Generated documentation
-│   ├── PROJECT_INDEX.md # Complete knowledge base
-│   └── ARCHITECTURE.md  # System architecture
+├── claudedocs/          # Project documentation
+│   ├── PROJECT_INDEX.md      # Complete knowledge base
+│   ├── ARCHITECTURE.md       # System architecture
+│   ├── REQUIREMENTS.md       # Functional specification
+│   └── IMPLEMENTATION_PLAN.md # Development roadmap
 ├── docs/                # Reference documentation
 │   ├── API.md           # API documentation
 │   └── tutorials/       # SIP protocol tutorials
@@ -284,23 +286,12 @@ gosip/
 
 ## Documentation
 
-### Project Documentation
 | Document | Description |
 |----------|-------------|
 | [claudedocs/PROJECT_INDEX.md](claudedocs/PROJECT_INDEX.md) | Complete knowledge base with package reference and API docs |
 | [claudedocs/ARCHITECTURE.md](claudedocs/ARCHITECTURE.md) | System architecture diagrams and component relationships |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | Complete functional and technical specification |
-| [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Development roadmap with P0 specifications |
-
-### Security Documentation
-| Document | Description |
-|----------|-------------|
-| [claudedocs/TLS_ENCRYPTION_IMPLEMENTATION_PLAN.md](claudedocs/TLS_ENCRYPTION_IMPLEMENTATION_PLAN.md) | TLS/SRTP/ZRTP encryption implementation |
-| [claudedocs/SECURITY_FIX_SESSION_TOKENS.md](claudedocs/SECURITY_FIX_SESSION_TOKENS.md) | Session token security hardening |
-
-### Reference
-| Document | Description |
-|----------|-------------|
+| [claudedocs/REQUIREMENTS.md](claudedocs/REQUIREMENTS.md) | Complete functional and technical specification |
+| [claudedocs/IMPLEMENTATION_PLAN.md](claudedocs/IMPLEMENTATION_PLAN.md) | Development roadmap with P0 specifications |
 | [docs/API.md](docs/API.md) | API endpoint documentation |
 | [docs/tutorials/](docs/tutorials/) | SIP protocol tutorials and reference |
 
