@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -174,14 +176,19 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 
 	// Send via Twilio (async - queue for sending)
 	go func() {
+		// Use detached context with timeout to avoid context cancellation issues
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		if h.deps.Twilio != nil {
 			twilioSID, sendErr := h.deps.Twilio.SendSMS(did.Number, req.ToNumber, req.Body, req.MediaURLs)
 			if sendErr != nil {
-				h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "failed")
+				slog.Error("Failed to send message via Twilio", "error", sendErr, "message_id", message.ID)
+				h.deps.DB.Messages.UpdateStatus(ctx, message.ID, "failed")
 			} else {
 				message.MessageSID = twilioSID
 				message.Status = "sent"
-				h.deps.DB.Messages.Update(r.Context(), message)
+				h.deps.DB.Messages.Update(ctx, message)
 			}
 		}
 	}()

@@ -414,65 +414,34 @@ func (r *MessageRepository) UpdateStatusByMessageSID(ctx context.Context, messag
 
 // GetStats returns message statistics
 func (r *MessageRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {
-	stats := make(map[string]interface{})
-
-	// Total messages
-	var total int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`).Scan(&total); err != nil {
+	// Single aggregated query instead of 8 separate queries
+	var total, inbound, outbound, unread, failed, today, thisWeek, thisMonth int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) as total,
+			SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound,
+			SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound,
+			SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) as unread,
+			SUM(CASE WHEN status IN ('failed', 'undelivered') THEN 1 ELSE 0 END) as failed,
+			SUM(CASE WHEN date(created_at) = date('now') THEN 1 ELSE 0 END) as today,
+			SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as this_week,
+			SUM(CASE WHEN created_at >= datetime('now', 'start of month') THEN 1 ELSE 0 END) as this_month
+		FROM messages
+	`).Scan(&total, &inbound, &outbound, &unread, &failed, &today, &thisWeek, &thisMonth)
+	if err != nil {
 		return nil, err
 	}
-	stats["total"] = total
 
-	// Inbound count
-	var inbound int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE direction = 'inbound'`).Scan(&inbound); err != nil {
-		return nil, err
-	}
-	stats["inbound"] = inbound
-
-	// Outbound count
-	var outbound int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE direction = 'outbound'`).Scan(&outbound); err != nil {
-		return nil, err
-	}
-	stats["outbound"] = outbound
-
-	// Unread count
-	var unread int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE is_read = 0 AND direction = 'inbound'`).Scan(&unread); err != nil {
-		return nil, err
-	}
-	stats["unread"] = unread
-
-	// Failed count
-	var failed int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE status IN ('failed', 'undelivered')`).Scan(&failed); err != nil {
-		return nil, err
-	}
-	stats["failed"] = failed
-
-	// Today's messages
-	var today int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE date(created_at) = date('now')`).Scan(&today); err != nil {
-		return nil, err
-	}
-	stats["today"] = today
-
-	// This week's messages
-	var thisWeek int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE created_at >= datetime('now', '-7 days')`).Scan(&thisWeek); err != nil {
-		return nil, err
-	}
-	stats["this_week"] = thisWeek
-
-	// This month's messages
-	var thisMonth int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE created_at >= datetime('now', 'start of month')`).Scan(&thisMonth); err != nil {
-		return nil, err
-	}
-	stats["this_month"] = thisMonth
-
-	return stats, nil
+	return map[string]interface{}{
+		"total":       total,
+		"inbound":     inbound,
+		"outbound":    outbound,
+		"unread":      unread,
+		"failed":      failed,
+		"today":       today,
+		"this_week":   thisWeek,
+		"this_month":  thisMonth,
+	}, nil
 }
 
 // GetConversationSummaries returns a summary of conversations (latest message per conversation)

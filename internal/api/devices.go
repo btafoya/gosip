@@ -59,12 +59,21 @@ func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	total, _ := h.deps.DB.Devices.Count(r.Context())
 
-	// Get registration status for each device
+	// Get registration status for each device (batch lookup to avoid N+1)
+	var activeMap map[int64]bool
+	if h.deps.SIP != nil && h.deps.SIP.GetRegistrar() != nil {
+		activeRegs, _ := h.deps.SIP.GetRegistrar().GetActiveRegistrations(r.Context())
+		activeMap = make(map[int64]bool, len(activeRegs))
+		for _, reg := range activeRegs {
+			activeMap[reg.DeviceID] = true
+		}
+	}
+
 	var response []*DeviceResponse
 	for _, d := range devices {
 		online := false
-		if h.deps.SIP != nil && h.deps.SIP.GetRegistrar() != nil {
-			online = h.deps.SIP.GetRegistrar().IsRegistered(r.Context(), d.ID)
+		if activeMap != nil {
+			online = activeMap[d.ID]
 		}
 		response = append(response, toDeviceResponse(d, online))
 	}
