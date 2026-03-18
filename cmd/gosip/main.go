@@ -58,6 +58,7 @@ func main() {
 	sipServer, err := sip.NewServer(sip.Config{
 		Port:      cfg.SIPPort,
 		UserAgent: config.DefaultUserAgent,
+		MOHPath:   cfg.MOHFilePath(""),
 	}, database)
 	if err != nil {
 		slog.Error("Failed to initialize SIP server", "error", err)

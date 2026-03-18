@@ -216,6 +216,19 @@ func (c *Config) CertsPath() string {
 	return filepath.Join(c.DataDir, CertsDir)
 }
 
+// MOHPath returns the path to the music-on-hold directory
+func (c *Config) MOHPath() string {
+	return filepath.Join(c.DataDir, MOHDir)
+}
+
+// MOHFilePath returns the full path to a MOH file
+func (c *Config) MOHFilePath(filename string) string {
+	if filename == "" {
+		filename = MOHDefaultFile
+	}
+	return filepath.Join(c.MOHPath(), filename)
+}
+
 // EnsureDirectories creates all required data directories
 func (c *Config) EnsureDirectories() error {
 	dirs := []string{
@@ -224,6 +237,7 @@ func (c *Config) EnsureDirectories() error {
 		c.VoicemailsPath(),
 		c.BackupsPath(),
 		c.CertsPath(),
+		c.MOHPath(),
 	}
 
 	for _, dir := range dirs {

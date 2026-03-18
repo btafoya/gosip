@@ -491,15 +491,11 @@ func (h *CallHandler) UploadMOHAudio(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create MOH directory if it doesn't exist
-	mohDir := "/var/lib/gosip/moh"
+	mohDir := h.deps.Config.MOHPath()
 	if err := os.MkdirAll(mohDir, 0755); err != nil {
-		// Fallback to data directory
-		mohDir = "data/moh"
-		if err := os.MkdirAll(mohDir, 0755); err != nil {
-			WriteError(w, http.StatusInternalServerError, "STORAGE_ERROR",
-				"Failed to create MOH storage directory", nil)
-			return
-		}
+		WriteError(w, http.StatusInternalServerError, "STORAGE_ERROR",
+			"Failed to create MOH storage directory", nil)
+		return
 	}
 
 	// Generate filename with timestamp

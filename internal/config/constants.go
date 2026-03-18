@@ -61,6 +61,8 @@ const (
 	VoicemailsDir     = "voicemails"
 	BackupsDir        = "backups"
 	CertsDir          = "certs"
+	MOHDir            = "moh"
+	MOHDefaultFile    = "default.wav"
 )
 
 // TLS defaults

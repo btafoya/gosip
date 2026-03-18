@@ -16,6 +16,23 @@ type MessageRepository struct {
 	db *sql.DB
 }
 
+// scanMessageRow scans a message from a database row, handling NULL values
+func scanMessageRow(msg *models.Message, didID sql.NullInt64, messageSID, body, status sql.NullString, mediaURLs []byte) {
+	if didID.Valid {
+		msg.DIDID = &didID.Int64
+	}
+	if messageSID.Valid {
+		msg.MessageSID = messageSID.String
+	}
+	if body.Valid {
+		msg.Body = body.String
+	}
+	if status.Valid {
+		msg.Status = status.String
+	}
+	msg.MediaURLs = mediaURLs
+}
+
 // NewMessageRepository creates a new MessageRepository
 func NewMessageRepository(db *sql.DB) *MessageRepository {
 	return &MessageRepository{db: db}
@@ -55,19 +72,7 @@ func (r *MessageRepository) GetByID(ctx context.Context, id int64) (*models.Mess
 	if err != nil {
 		return nil, err
 	}
-	if didID.Valid {
-		msg.DIDID = &didID.Int64
-	}
-	if messageSID.Valid {
-		msg.MessageSID = messageSID.String
-	}
-	if body.Valid {
-		msg.Body = body.String
-	}
-	if status.Valid {
-		msg.Status = status.String
-	}
-	msg.MediaURLs = mediaURLs
+	scanMessageRow(msg, didID, messageSID, body, status, mediaURLs)
 	return msg, nil
 }
 
@@ -87,19 +92,7 @@ func (r *MessageRepository) GetByMessageSID(ctx context.Context, msgSID string) 
 	if err != nil {
 		return nil, err
 	}
-	if didID.Valid {
-		msg.DIDID = &didID.Int64
-	}
-	if messageSID.Valid {
-		msg.MessageSID = messageSID.String
-	}
-	if body.Valid {
-		msg.Body = body.String
-	}
-	if status.Valid {
-		msg.Status = status.String
-	}
-	msg.MediaURLs = mediaURLs
+	scanMessageRow(msg, didID, messageSID, body, status, mediaURLs)
 	return msg, nil
 }
 
@@ -151,19 +144,7 @@ func (r *MessageRepository) List(ctx context.Context, limit, offset int) ([]*mod
 		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
-		if didID.Valid {
-			msg.DIDID = &didID.Int64
-		}
-		if messageSID.Valid {
-			msg.MessageSID = messageSID.String
-		}
-		if body.Valid {
-			msg.Body = body.String
-		}
-		if status.Valid {
-			msg.Status = status.String
-		}
-		msg.MediaURLs = mediaURLs
+		scanMessageRow(msg, didID, messageSID, body, status, mediaURLs)
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
@@ -267,19 +248,7 @@ func (r *MessageRepository) ListUnread(ctx context.Context) ([]*models.Message, 
 		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
-		if didID.Valid {
-			msg.DIDID = &didID.Int64
-		}
-		if messageSID.Valid {
-			msg.MessageSID = messageSID.String
-		}
-		if body.Valid {
-			msg.Body = body.String
-		}
-		if status.Valid {
-			msg.Status = status.String
-		}
-		msg.MediaURLs = mediaURLs
+		scanMessageRow(msg, didID, messageSID, body, status, mediaURLs)
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
@@ -340,19 +309,7 @@ func (r *MessageRepository) ListByDirection(ctx context.Context, direction strin
 		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
-		if didID.Valid {
-			msg.DIDID = &didID.Int64
-		}
-		if messageSID.Valid {
-			msg.MessageSID = messageSID.String
-		}
-		if body.Valid {
-			msg.Body = body.String
-		}
-		if status.Valid {
-			msg.Status = status.String
-		}
-		msg.MediaURLs = mediaURLs
+		scanMessageRow(msg, didID, messageSID, body, status, mediaURLs)
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
@@ -378,19 +335,7 @@ func (r *MessageRepository) ListByRemoteNumber(ctx context.Context, remoteNumber
 		if err := rows.Scan(&msg.ID, &messageSID, &msg.Direction, &msg.FromNumber, &msg.ToNumber, &didID, &body, &mediaURLs, &status, &msg.CreatedAt, &msg.IsRead); err != nil {
 			return nil, err
 		}
-		if didID.Valid {
-			msg.DIDID = &didID.Int64
-		}
-		if messageSID.Valid {
-			msg.MessageSID = messageSID.String
-		}
-		if body.Valid {
-			msg.Body = body.String
-		}
-		if status.Valid {
-			msg.Status = status.String
-		}
-		msg.MediaURLs = mediaURLs
+		scanMessageRow(msg, didID, messageSID, body, status, mediaURLs)
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
