@@ -141,6 +141,18 @@ func (h *RouteHandler) Get(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, toRouteResponse(route))
 }
 
+// UpdateRouteRequest represents a route update request
+type UpdateRouteRequest struct {
+	DIDID         *int64          `json:"did_id,omitempty"`
+	Priority      int             `json:"priority"`
+	Name          string          `json:"name,omitempty"`
+	ConditionType string          `json:"condition_type,omitempty"`
+	ConditionData json.RawMessage `json:"condition_data,omitempty"`
+	ActionType    string          `json:"action_type,omitempty"`
+	ActionData    json.RawMessage `json:"action_data,omitempty"`
+	Enabled       *bool           `json:"enabled,omitempty"`
+}
+
 // Update updates a route
 func (h *RouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -159,7 +171,7 @@ func (h *RouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateRouteRequest
+	var req UpdateRouteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteValidationError(w, "Invalid request body", nil)
 		return
@@ -181,7 +193,9 @@ func (h *RouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 		route.ActionData = req.ActionData
 	}
 	route.Priority = req.Priority
-	route.Enabled = req.Enabled
+	if req.Enabled != nil {
+		route.Enabled = *req.Enabled
+	}
 	route.DIDID = req.DIDID
 
 	if err := h.deps.DB.Routes.Update(r.Context(), route); err != nil {

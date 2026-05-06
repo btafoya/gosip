@@ -169,7 +169,14 @@ async function saveSystemSettings() {
   success.value = null
 
   try {
-    await api.put('/system/config', systemSettings.value)
+    const payload = { ...systemSettings.value }
+    const passwordFields = ['twilio_auth_token', 'smtp_password', 'gotify_token']
+    for (const field of passwordFields) {
+      if ((payload as Record<string, unknown>)[field] === '') {
+        delete (payload as Record<string, unknown>)[field]
+      }
+    }
+    await api.put('/system/config', payload)
     success.value = 'System settings updated'
   } catch (err: unknown) {
     const apiError = err as { response?: { data?: { error?: { message?: string } } } }

@@ -221,7 +221,9 @@ async function showQRCode(token: ProvisioningToken) {
 
 // Utility functions
 function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).catch(() => {
+    console.error('Failed to copy to clipboard')
+  })
 }
 
 function formatDate(dateStr: string) {

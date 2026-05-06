@@ -86,7 +86,7 @@ func New(dbPath string) (*DB, error) {
 	}
 
 	// Ensure backups directory exists
-	if err := os.MkdirAll(backupsDir, 0755); err != nil {
+	if err := os.MkdirAll(backupsDir, 0750); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to create backups directory: %w", err)
 	}
@@ -145,11 +145,22 @@ func (db *DB) Migrate() error {
 		}
 	}
 
+	// Sort migrations numerically by version prefix
+	sort.Slice(migrations, func(i, j int) bool {
+		var vi, vj int
+		_, _ = fmt.Sscanf(migrations[i], "%d_", &vi)
+		_, _ = fmt.Sscanf(migrations[j], "%d_", &vj)
+		return vi < vj
+	})
+
 	// Apply each migration
 	for _, filename := range migrations {
 		// Extract version number from filename (e.g., "001_initial_schema.up.sql" -> 1)
 		var version int
-		fmt.Sscanf(filename, "%d_", &version)
+		if _, err := fmt.Sscanf(filename, "%d_", &version); err != nil {
+			slog.Warn("Skipping malformed migration filename", "filename", filename, "error", err)
+			continue
+		}
 
 		// Check if already applied
 		var count int
@@ -262,8 +273,8 @@ func validateFilename(filename string) error {
 		return fmt.Errorf("invalid backup filename format")
 	}
 
-	// Validate only safe characters
-	safePattern := regexp.MustCompile(`^backup_[0-9]{8}_[0-9]{6}\.db$`)
+	// Validate only safe characters (supports millisecond suffix)
+	safePattern := regexp.MustCompile(`^backup_[0-9]{8}_[0-9]{6}(\.[0-9]{3})?\.db$`)
 	if !safePattern.MatchString(filename) {
 		return fmt.Errorf("invalid backup filename format")
 	}
@@ -278,7 +289,7 @@ func (db *DB) SetBackupsDir(dir string) error {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	if err := os.MkdirAll(absDir, 0755); err != nil {
+	if err := os.MkdirAll(absDir, 0750); err != nil {
 		return fmt.Errorf("failed to create backups directory: %w", err)
 	}
 
@@ -295,7 +306,7 @@ func (db *DB) GetBackupsDir() string {
 // Returns the filename, size in bytes, and any error
 func (db *DB) CreateBackup(ctx context.Context) (string, int64, error) {
 	// Generate backup filename with timestamp
-	filename := fmt.Sprintf("backup_%s.db", time.Now().Format("20060102_150405"))
+	filename := fmt.Sprintf("backup_%s.db", time.Now().Format("20060102_150405.000"))
 
 	// Build full backup path
 	backupPath := filepath.Join(db.backupsDir, filename)

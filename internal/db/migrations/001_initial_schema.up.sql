@@ -18,7 +18,7 @@ CREATE TABLE users (
 -- Registered SIP devices
 CREATE TABLE devices (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
@@ -78,8 +78,8 @@ CREATE TABLE cdrs (
     direction TEXT CHECK(direction IN ('inbound', 'outbound')),
     from_number TEXT NOT NULL,
     to_number TEXT NOT NULL,
-    did_id INTEGER REFERENCES dids(id),
-    device_id INTEGER REFERENCES devices(id),
+    did_id INTEGER REFERENCES dids(id) ON DELETE SET NULL,
+    device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL,
     started_at DATETIME NOT NULL,
     answered_at DATETIME,
     ended_at DATETIME,
@@ -92,8 +92,8 @@ CREATE TABLE cdrs (
 -- Voicemails
 CREATE TABLE voicemails (
     id INTEGER PRIMARY KEY,
-    cdr_id INTEGER REFERENCES cdrs(id),
-    user_id INTEGER REFERENCES users(id),
+    cdr_id INTEGER REFERENCES cdrs(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     from_number TEXT NOT NULL,
     audio_url TEXT,
     transcript TEXT,
@@ -109,7 +109,7 @@ CREATE TABLE messages (
     direction TEXT CHECK(direction IN ('inbound', 'outbound')),
     from_number TEXT NOT NULL,
     to_number TEXT NOT NULL,
-    did_id INTEGER REFERENCES dids(id),
+    did_id INTEGER REFERENCES dids(id) ON DELETE SET NULL,
     body TEXT,
     media_urls JSON,
     status TEXT,

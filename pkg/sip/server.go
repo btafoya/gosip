@@ -240,13 +240,34 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Start registration cleanup goroutine
-	go s.cleanupExpiredRegistrations(ctx)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in cleanupExpiredRegistrations", "recover", r)
+			}
+		}()
+		s.cleanupExpiredRegistrations(ctx)
+	}()
 
 	// Start session cleanup goroutine
-	go s.cleanupTerminatedSessions(ctx)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in cleanupTerminatedSessions", "recover", r)
+			}
+		}()
+		s.cleanupTerminatedSessions(ctx)
+	}()
 
 	// Start MWI subscription cleanup goroutine
-	go s.cleanupExpiredMWISubscriptions(ctx)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in cleanupExpiredMWISubscriptions", "recover", r)
+			}
+		}()
+		s.cleanupExpiredMWISubscriptions(ctx)
+	}()
 
 	return nil
 }
@@ -416,17 +437,25 @@ func (s *Server) SendMWINotify(ctx context.Context, sub *MWISubscription, body s
 		remaining = 0
 	}
 
+	// Sanitize subscription fields to prevent header injection
+	contactURI := sanitizeSIPHeaderValue(sub.ContactURI)
+	callID := sanitizeSIPHeaderValue(sub.CallID)
+	fromURI := sanitizeSIPHeaderValue(sub.FromURI)
+	fromTag := sanitizeSIPHeaderValue(sub.FromTag)
+	toURI := sanitizeSIPHeaderValue(sub.ToURI)
+	toTag := sanitizeSIPHeaderValue(sub.ToTag)
+
 	// Build NOTIFY request per RFC 3265 (SIP Events) and RFC 3842 (MWI)
 	// Note: The actual destination is derived from the Contact header
 	notifyReq := sip.NewRequest(sip.NOTIFY, sip.Uri{})
 
 	// Add Contact header for routing
-	notifyReq.AppendHeader(sip.NewHeader("Contact", fmt.Sprintf("<%s>", sub.ContactURI)))
+	notifyReq.AppendHeader(sip.NewHeader("Contact", fmt.Sprintf("<%s>", contactURI)))
 
 	// Set the essential headers
-	notifyReq.AppendHeader(sip.NewHeader("Call-ID", sub.CallID))
-	notifyReq.AppendHeader(sip.NewHeader("From", fmt.Sprintf("<%s>;tag=%s", sub.FromURI, sub.FromTag)))
-	notifyReq.AppendHeader(sip.NewHeader("To", fmt.Sprintf("<%s>;tag=%s", sub.ToURI, sub.ToTag)))
+	notifyReq.AppendHeader(sip.NewHeader("Call-ID", callID))
+	notifyReq.AppendHeader(sip.NewHeader("From", fmt.Sprintf("<%s>;tag=%s", fromURI, fromTag)))
+	notifyReq.AppendHeader(sip.NewHeader("To", fmt.Sprintf("<%s>;tag=%s", toURI, toTag)))
 	notifyReq.AppendHeader(sip.NewHeader("CSeq", fmt.Sprintf("%d NOTIFY", sub.CSeq)))
 
 	// Event header per RFC 3265

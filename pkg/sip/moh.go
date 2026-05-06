@@ -2,13 +2,18 @@
 package sip
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+// maxMOHSize is the maximum allowed size for an MOH audio file (50 MB).
+const maxMOHSize int64 = 50 * 1024 * 1024
 
 // MOHManager manages Music on Hold streams
 type MOHManager struct {
@@ -178,7 +183,8 @@ func (m *MOHManager) streamAudio(stream *MOHStream) {
 	}
 }
 
-// loadAudioFile loads the MOH audio file
+// loadAudioFile loads the MOH audio file.
+// The read is capped at maxMOHSize to prevent memory exhaustion.
 func (m *MOHManager) loadAudioFile() ([]byte, error) {
 	// Check if file exists
 	if _, err := os.Stat(m.audioPath); os.IsNotExist(err) {
@@ -191,7 +197,7 @@ func (m *MOHManager) loadAudioFile() ([]byte, error) {
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, maxMOHSize))
 	if err != nil {
 		return nil, err
 	}
@@ -215,11 +221,31 @@ func (m *MOHManager) generateSilence() []byte {
 	return silence
 }
 
-// SetAudioPath updates the MOH audio file path
-func (m *MOHManager) SetAudioPath(path string) {
+// SetAudioPath updates the MOH audio file path.
+// It validates that the resolved absolute path is under the allowed base directory
+// to prevent path traversal attacks.
+func (m *MOHManager) SetAudioPath(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("invalid audio path: %w", err)
+	}
+
+	baseDir := "/var/lib/gosip/moh"
+	if m.audioPath != "" {
+		baseAbs, err := filepath.Abs(filepath.Dir(m.audioPath))
+		if err == nil {
+			baseDir = baseAbs
+		}
+	}
+
+	if !strings.HasPrefix(absPath, baseDir+string(filepath.Separator)) && absPath != baseDir {
+		return fmt.Errorf("audio path outside allowed directory: %s", absPath)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.audioPath = path
+	m.audioPath = absPath
+	return nil
 }
 
 // Enable enables or disables MOH

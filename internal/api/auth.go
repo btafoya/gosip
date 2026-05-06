@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -98,7 +99,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.clearFailedAttempts(clientIP)
 
 	// Update last login
-	h.deps.DB.Users.UpdateLastLogin(r.Context(), user.ID)
+	if err := h.deps.DB.Users.UpdateLastLogin(r.Context(), user.ID); err != nil {
+		WriteInternalError(w)
+		return
+	}
 
 	// Create session with persistent storage
 	token, err := createSessionWithRequest(r.Context(), h.deps.DB, user.ID, r.UserAgent(), r.RemoteAddr)
@@ -113,8 +117,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(config.SessionDuration.Seconds()),
 	})
 
@@ -232,7 +236,11 @@ func (h *AuthHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total, _ := h.deps.DB.Users.Count(r.Context())
+	total, err := h.deps.DB.Users.Count(r.Context())
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
 
 	// Convert to response format
 	var response []*UserResponse
@@ -262,6 +270,8 @@ func (h *AuthHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var errors []FieldError
 	if req.Email == "" {
 		errors = append(errors, FieldError{Field: "email", Message: "Email is required"})
+	} else if !strings.Contains(req.Email, "@") {
+		errors = append(errors, FieldError{Field: "email", Message: "Invalid email format"})
 	}
 	if len(req.Password) < 8 {
 		errors = append(errors, FieldError{Field: "password", Message: "Password must be at least 8 characters"})
@@ -290,7 +300,11 @@ func (h *AuthHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.deps.DB.Users.Create(r.Context(), user); err != nil {
-		WriteError(w, http.StatusConflict, ErrCodeConflict, "User with this email already exists", nil)
+		if isUniqueConstraintError(err) {
+			WriteError(w, http.StatusConflict, ErrCodeConflict, "User with this email already exists", nil)
+		} else {
+			WriteInternalError(w)
+		}
 		return
 	}
 
@@ -415,7 +429,7 @@ func (h *AuthHandler) checkLoginAttempt(ip string) (bool, time.Duration) {
 
 	// Check if locked out
 	if len(recent) >= config.MaxFailedLoginAttempts {
-		lockoutEnd := recent[0].Add(config.LoginLockoutDuration)
+		lockoutEnd := recent[len(recent)-1].Add(config.LoginLockoutDuration)
 		if now.Before(lockoutEnd) {
 			return false, lockoutEnd.Sub(now)
 		}

@@ -4,7 +4,7 @@ import { authApi, setupApi, type User } from '@/api/auth'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
-  const token = ref<string | null>(localStorage.getItem('token'))
+  const token = ref<string | null>(null)
   const initialized = ref(false)
   const setupCompleted = ref(true)
   const loading = ref(false)
@@ -35,7 +35,6 @@ export const useAuthStore = defineStore('auth', () => {
           // Token invalid or expired
           user.value = null
           token.value = null
-          localStorage.removeItem('token')
         }
       }
     } catch {
@@ -54,7 +53,6 @@ export const useAuthStore = defineStore('auth', () => {
       const response = await authApi.login({ email, password })
       user.value = response.user
       token.value = response.token
-      localStorage.setItem('token', response.token)
       return true
     } catch (err: unknown) {
       const apiError = err as { response?: { data?: { error?: { message?: string } } } }
@@ -71,7 +69,6 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       user.value = null
       token.value = null
-      localStorage.removeItem('token')
     }
   }
 

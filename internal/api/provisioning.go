@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,7 +54,11 @@ func (h *ProvisioningHandler) ProvisionDevice(w http.ResponseWriter, r *http.Req
 	}
 
 	// Check if username already exists
-	existing, _ := h.deps.DB.Devices.GetByUsername(r.Context(), req.Username)
+	existing, err := h.deps.DB.Devices.GetByUsername(r.Context(), req.Username)
+	if err != nil && err != db.ErrDeviceNotFound {
+		respondError(w, http.StatusInternalServerError, "DB_ERROR", "Failed to check username")
+		return
+	}
 	if existing != nil {
 		respondError(w, http.StatusConflict, "USERNAME_EXISTS", "A device with this username already exists")
 		return
@@ -117,7 +122,7 @@ func (h *ProvisioningHandler) ProvisionDevice(w http.ResponseWriter, r *http.Req
 
 		if err := h.deps.DB.ProvisioningTokens.Create(r.Context(), token); err != nil {
 			// Don't fail the whole request, just log the error
-			fmt.Printf("Failed to create provisioning token: %v\n", err)
+			slog.Error("Failed to create provisioning token", "error", err)
 		} else {
 			response.Token = token.Token
 			response.TokenExpiresAt = token.ExpiresAt.Format(time.RFC3339)
@@ -165,21 +170,31 @@ func (h *ProvisioningHandler) GetDeviceConfig(w http.ResponseWriter, r *http.Req
 	}
 
 	// Log the config fetch event
-	h.deps.DB.DeviceEvents.LogEvent(r.Context(), device.ID, "config_fetch", map[string]interface{}{
+	if err := h.deps.DB.DeviceEvents.LogEvent(r.Context(), device.ID, "config_fetch", map[string]interface{}{
 		"token_id": token.ID,
-	}, r.RemoteAddr, r.UserAgent())
+	}, r.RemoteAddr, r.UserAgent()); err != nil {
+		slog.Error("failed to log config fetch event", "error", err, "device_id", device.ID)
+	}
 
 	// Update device's last config fetch time
-	h.deps.DB.Devices.UpdateLastConfigFetch(r.Context(), device.ID)
+	if err := h.deps.DB.Devices.UpdateLastConfigFetch(r.Context(), device.ID); err != nil {
+		slog.Error("failed to update last config fetch", "error", err, "device_id", device.ID)
+	}
 
 	// Get the provisioning profile
 	var profile *models.ProvisioningProfile
 	if device.Vendor != nil {
 		if device.Model != nil {
-			profile, _ = h.deps.DB.ProvisioningProfiles.GetByVendorModel(r.Context(), *device.Vendor, *device.Model)
+			profile, err = h.deps.DB.ProvisioningProfiles.GetByVendorModel(r.Context(), *device.Vendor, *device.Model)
+			if err != nil && err != db.ErrProfileNotFound {
+				slog.Error("failed to get provisioning profile by vendor/model", "error", err, "vendor", *device.Vendor, "model", *device.Model)
+			}
 		}
 		if profile == nil {
-			profile, _ = h.deps.DB.ProvisioningProfiles.GetDefaultForVendor(r.Context(), *device.Vendor)
+			profile, err = h.deps.DB.ProvisioningProfiles.GetDefaultForVendor(r.Context(), *device.Vendor)
+			if err != nil && err != db.ErrProfileNotFound {
+				slog.Error("failed to get default provisioning profile for vendor", "error", err, "vendor", *device.Vendor)
+			}
 		}
 	}
 
@@ -191,16 +206,22 @@ func (h *ProvisioningHandler) GetDeviceConfig(w http.ResponseWriter, r *http.Req
 	// Generate the config from template
 	config, err := h.generateConfig(profile, device)
 	if err != nil {
-		h.deps.DB.DeviceEvents.LogEvent(r.Context(), device.ID, "config_fetch_failed", map[string]interface{}{
+		if logErr := h.deps.DB.DeviceEvents.LogEvent(r.Context(), device.ID, "config_fetch_failed", map[string]interface{}{
 			"error": err.Error(),
-		}, r.RemoteAddr, r.UserAgent())
+		}, r.RemoteAddr, r.UserAgent()); logErr != nil {
+			slog.Error("failed to log config fetch failure", "error", logErr, "device_id", device.ID)
+		}
 		respondError(w, http.StatusInternalServerError, "CONFIG_ERROR", "Failed to generate configuration")
 		return
 	}
 
 	// Update provisioning status
-	h.deps.DB.Devices.UpdateProvisioningStatus(r.Context(), device.ID, "provisioned")
-	h.deps.DB.DeviceEvents.LogEvent(r.Context(), device.ID, "provision_complete", nil, r.RemoteAddr, r.UserAgent())
+	if err := h.deps.DB.Devices.UpdateProvisioningStatus(r.Context(), device.ID, "provisioned"); err != nil {
+		slog.Error("failed to update provisioning status", "error", err, "device_id", device.ID)
+	}
+	if err := h.deps.DB.DeviceEvents.LogEvent(r.Context(), device.ID, "provision_complete", nil, r.RemoteAddr, r.UserAgent()); err != nil {
+		slog.Error("failed to log provision complete event", "error", err, "device_id", device.ID)
+	}
 
 	// Determine content type based on profile vendor
 	contentType := "application/xml"
@@ -397,19 +418,60 @@ func (h *ProvisioningHandler) UpdateProfile(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var profile models.ProvisioningProfile
-	if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+	type UpdateProfileRequest struct {
+		Name           string          `json:"name,omitempty"`
+		Vendor         string          `json:"vendor,omitempty"`
+		Model          *string         `json:"model,omitempty"`
+		Description    *string         `json:"description,omitempty"`
+		ConfigTemplate string          `json:"config_template,omitempty"`
+		Variables      json.RawMessage `json:"variables,omitempty"`
+		IsDefault      *bool           `json:"is_default,omitempty"`
+	}
+
+	var req UpdateProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
 		return
 	}
 
-	profile.ID = id
-	if err := h.deps.DB.ProvisioningProfiles.Update(r.Context(), &profile); err != nil {
+	existing, err := h.deps.DB.ProvisioningProfiles.GetByID(r.Context(), id)
+	if err != nil {
+		if err == db.ErrProfileNotFound {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "DB_ERROR", "Failed to fetch profile")
+		return
+	}
+
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.Vendor != "" {
+		existing.Vendor = req.Vendor
+	}
+	if req.Model != nil && *req.Model != "" {
+		existing.Model = req.Model
+	}
+	if req.Description != nil && *req.Description != "" {
+		existing.Description = req.Description
+	}
+	if req.ConfigTemplate != "" {
+		existing.ConfigTemplate = req.ConfigTemplate
+	}
+	if req.Variables != nil {
+		existing.Variables = req.Variables
+	}
+	if req.IsDefault != nil {
+		existing.IsDefault = *req.IsDefault
+	}
+
+	if err := h.deps.DB.ProvisioningProfiles.Update(r.Context(), existing); err != nil {
 		respondError(w, http.StatusInternalServerError, "DB_ERROR", "Failed to update profile")
 		return
 	}
 
-	respondJSON(w, http.StatusOK, profile)
+	respondJSON(w, http.StatusOK, existing)
 }
 
 // DeleteProfile deletes a provisioning profile
@@ -670,7 +732,11 @@ func (h *ProvisioningHandler) GetDeviceEvents(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	count, _ := h.deps.DB.DeviceEvents.CountByDevice(r.Context(), deviceID)
+	count, err := h.deps.DB.DeviceEvents.CountByDevice(r.Context(), deviceID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "DB_ERROR", "Failed to count events")
+		return
+	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"events": events,

@@ -3,6 +3,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -15,7 +16,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 
 	// Middleware stack
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	r.Use(TrustedProxyIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
@@ -278,7 +279,17 @@ func NewRouter(deps *Dependencies) chi.Router {
 	})
 
 	// Serve frontend static files
-	r.Handle("/*", http.FileServer(http.Dir("./frontend/dist")))
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./frontend/dist/index.html")
+	})
+	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+		path := "./frontend/dist" + r.URL.Path
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			http.ServeFile(w, r, "./frontend/dist/index.html")
+			return
+		}
+		http.FileServer(http.Dir("./frontend/dist")).ServeHTTP(w, r)
+	})
 
 	return r
 }

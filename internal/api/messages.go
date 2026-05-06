@@ -175,7 +175,7 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send via Twilio (async - queue for sending)
-	go func() {
+	safeGo(func() {
 		// Use detached context with timeout to avoid context cancellation issues
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -191,7 +191,7 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 				h.deps.DB.Messages.Update(ctx, message)
 			}
 		}
-	}()
+	})
 
 	WriteJSON(w, http.StatusAccepted, toMessageResponse(message))
 }

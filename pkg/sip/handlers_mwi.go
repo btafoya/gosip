@@ -49,6 +49,18 @@ func (s *Server) handleMWISubscribe(ctx context.Context, req *sip.Request, tx si
 		return
 	}
 
+	via := req.Via()
+	if via == nil {
+		s.respondToSubscribe(tx, req, sip.StatusCode(400), "Missing Via header")
+		return
+	}
+
+	callID := req.CallID()
+	if callID == nil {
+		s.respondToSubscribe(tx, req, sip.StatusCode(400), "Missing Call-ID header")
+		return
+	}
+
 	// Get AOR from To header (the mailbox being subscribed to)
 	aor := toHeader.Address.String()
 
@@ -62,10 +74,7 @@ func (s *Server) handleMWISubscribe(ctx context.Context, req *sip.Request, tx si
 	}
 	if contactURI == "" {
 		// Fall back to Via header
-		via := req.Via()
-		if via != nil {
-			contactURI = fmt.Sprintf("sip:%s:%d", via.Host, via.Port)
-		}
+		contactURI = fmt.Sprintf("sip:%s:%d", via.Host, via.Port)
 	}
 
 	// Get Expires header (default to 3600 seconds per RFC)
@@ -87,7 +96,7 @@ func (s *Server) handleMWISubscribe(ctx context.Context, req *sip.Request, tx si
 	if fromHeader.Params != nil {
 		fromTag, _ = fromHeader.Params.Get("tag")
 	}
-	subID := fmt.Sprintf("%s-%s", req.CallID().Value(), fromTag)
+	subID := fmt.Sprintf("%s-%s", callID.Value(), fromTag)
 
 	// Create or refresh subscription
 	sub := &MWISubscription{
@@ -96,7 +105,7 @@ func (s *Server) handleMWISubscribe(ctx context.Context, req *sip.Request, tx si
 		ContactURI: contactURI,
 		FromURI:    fromHeader.Address.String(),
 		ToURI:      toHeader.Address.String(),
-		CallID:     req.CallID().Value(),
+		CallID:     callID.Value(),
 		FromTag:    fromTag,
 		Expires:    expires,
 	}
@@ -157,12 +166,23 @@ func (s *Server) handleMWISubscribe(ctx context.Context, req *sip.Request, tx si
 // handleMWIUnsubscribe handles MWI unsubscribe (Expires: 0)
 func (s *Server) handleMWIUnsubscribe(ctx context.Context, req *sip.Request, tx sip.ServerTransaction) {
 	fromHeader := req.From()
+	if fromHeader == nil {
+		s.respondToSubscribe(tx, req, sip.StatusCode(400), "Missing From header")
+		return
+	}
+
+	callID := req.CallID()
+	if callID == nil {
+		s.respondToSubscribe(tx, req, sip.StatusCode(400), "Missing Call-ID header")
+		return
+	}
+
 	fromTag := ""
-	if fromHeader != nil && fromHeader.Params != nil {
+	if fromHeader.Params != nil {
 		fromTag, _ = fromHeader.Params.Get("tag")
 	}
 
-	subID := fmt.Sprintf("%s-%s", req.CallID().Value(), fromTag)
+	subID := fmt.Sprintf("%s-%s", callID.Value(), fromTag)
 
 	s.mwiMgr.RemoveSubscription(subID)
 

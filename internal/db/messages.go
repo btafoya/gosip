@@ -368,9 +368,9 @@ func (r *MessageRepository) GetStats(ctx context.Context) (map[string]interface{
 			SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound,
 			SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) as unread,
 			SUM(CASE WHEN status IN ('failed', 'undelivered') THEN 1 ELSE 0 END) as failed,
-			SUM(CASE WHEN date(created_at) = date('now') THEN 1 ELSE 0 END) as today,
-			SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as this_week,
-			SUM(CASE WHEN created_at >= datetime('now', 'start of month') THEN 1 ELSE 0 END) as this_month
+			SUM(CASE WHEN date(created_at) = date('now', 'localtime') THEN 1 ELSE 0 END) as today,
+			SUM(CASE WHEN created_at >= datetime('now', 'localtime', '-7 days') THEN 1 ELSE 0 END) as this_week,
+			SUM(CASE WHEN created_at >= datetime('now', 'localtime', 'start of month') THEN 1 ELSE 0 END) as this_month
 		FROM messages
 	`).Scan(&total, &inbound, &outbound, &unread, &failed, &today, &thisWeek, &thisMonth)
 	if err != nil {

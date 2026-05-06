@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { isInternalPath } from '@/utils/validation'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,8 +14,8 @@ const password = ref('')
 async function handleLogin() {
   const success = await authStore.login(email.value, password.value)
   if (success) {
-    const redirect = route.query.redirect as string || '/'
-    router.push(redirect)
+    const redirect = route.query.redirect as string
+    router.push(isInternalPath(redirect) ? redirect : '/')
   }
 }
 </script>

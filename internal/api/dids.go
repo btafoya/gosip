@@ -2,13 +2,30 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"unicode"
 
 	"github.com/btafoya/gosip/internal/db"
 	"github.com/btafoya/gosip/internal/models"
 	"github.com/go-chi/chi/v5"
 )
+
+// isValidPhoneNumber checks that a phone number contains only +, digits, spaces, dashes, and parens.
+func isValidPhoneNumber(s string) bool {
+	for _, r := range s {
+		switch r {
+		case '+', ' ', '-', '(', ')':
+			// allowed
+		default:
+			if !unicode.IsDigit(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // DIDHandler handles DID-related API endpoints
 type DIDHandler struct {
@@ -76,6 +93,12 @@ func (h *DIDHandler) Create(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if !isValidPhoneNumber(req.Number) {
+		WriteValidationError(w, "Validation failed", []FieldError{
+			{Field: "number", Message: "Phone number contains invalid characters"},
+		})
+		return
+	}
 
 	did := &models.DID{
 		Number:       req.Number,
@@ -86,7 +109,11 @@ func (h *DIDHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.deps.DB.DIDs.Create(r.Context(), did); err != nil {
-		WriteError(w, http.StatusConflict, ErrCodeConflict, "DID with this number already exists", nil)
+		if isUniqueConstraintError(err) {
+			WriteError(w, http.StatusConflict, ErrCodeConflict, "DID with this number already exists", nil)
+		} else {
+			WriteInternalError(w)
+		}
 		return
 	}
 
@@ -242,6 +269,7 @@ func (h *DIDHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) {
 				existing.Name = tn.FriendlyName
 			}
 			if err := h.deps.DB.DIDs.Update(r.Context(), existing); err != nil {
+				slog.Error("failed to update DID during sync", "error", err, "did_id", existing.ID)
 				continue
 			}
 			synced = append(synced, toDIDResponse(existing))
@@ -256,6 +284,7 @@ func (h *DIDHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) {
 				VoiceEnabled: tn.VoiceEnabled,
 			}
 			if err := h.deps.DB.DIDs.Create(r.Context(), did); err != nil {
+				slog.Error("failed to create DID during sync", "error", err, "number", did.Number)
 				continue
 			}
 			synced = append(synced, toDIDResponse(did))

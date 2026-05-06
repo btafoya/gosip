@@ -96,35 +96,59 @@ func (r *BlocklistRepository) List(ctx context.Context) ([]*models.BlocklistEntr
 
 // IsBlocked checks if a phone number matches any blocklist entry
 func (r *BlocklistRepository) IsBlocked(ctx context.Context, number string) (bool, *models.BlocklistEntry, error) {
-	entries, err := r.List(ctx)
-	if err != nil {
+	normalizedNumber := normalizeNumber(number)
+
+	// 1. Check exact match
+	var entry models.BlocklistEntry
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, pattern, pattern_type, reason, created_at
+		FROM blocklist WHERE pattern_type = 'exact' AND pattern = ?
+	`, normalizedNumber).Scan(&entry.ID, &entry.Pattern, &entry.PatternType, &entry.Reason, &entry.CreatedAt)
+	if err == nil {
+		return true, &entry, nil
+	}
+	if err != sql.ErrNoRows {
 		return false, nil, err
 	}
 
-	// Normalize the number (remove spaces, dashes)
-	normalizedNumber := normalizeNumber(number)
+	// 2. Check prefix match
+	err = r.db.QueryRowContext(ctx, `
+		SELECT id, pattern, pattern_type, reason, created_at
+		FROM blocklist WHERE pattern_type = 'prefix' AND ? LIKE pattern || '%'
+		ORDER BY LENGTH(pattern) DESC LIMIT 1
+	`, normalizedNumber).Scan(&entry.ID, &entry.Pattern, &entry.PatternType, &entry.Reason, &entry.CreatedAt)
+	if err == nil {
+		return true, &entry, nil
+	}
+	if err != sql.ErrNoRows {
+		return false, nil, err
+	}
 
-	for _, entry := range entries {
-		normalizedPattern := normalizeNumber(entry.Pattern)
+	// 3. Check regex patterns (load only regex entries)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, pattern, pattern_type, reason, created_at
+		FROM blocklist WHERE pattern_type = 'regex'
+	`)
+	if err != nil {
+		return false, nil, err
+	}
+	defer rows.Close()
 
-		switch entry.PatternType {
-		case "exact":
-			if normalizedNumber == normalizedPattern {
-				return true, entry, nil
-			}
-		case "prefix":
-			if strings.HasPrefix(normalizedNumber, normalizedPattern) {
-				return true, entry, nil
-			}
-		case "regex":
-			matched, err := regexp.MatchString(entry.Pattern, normalizedNumber)
-			if err != nil {
-				continue // Skip invalid regex patterns
-			}
-			if matched {
-				return true, entry, nil
-			}
+	for rows.Next() {
+		var e models.BlocklistEntry
+		if err := rows.Scan(&e.ID, &e.Pattern, &e.PatternType, &e.Reason, &e.CreatedAt); err != nil {
+			return false, nil, err
 		}
+		matched, err := regexp.MatchString(e.Pattern, normalizedNumber)
+		if err != nil {
+			continue
+		}
+		if matched {
+			return true, &e, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, nil, err
 	}
 
 	return false, nil, nil

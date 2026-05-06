@@ -132,12 +132,7 @@ export const callsApi = {
 
     const response = await apiClient.post<MOHUploadResponse>(
       '/calls/moh/upload',
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      }
+      formData
     )
     return response.data
   },
@@ -149,12 +144,7 @@ export const callsApi = {
 
     const response = await apiClient.post<WAVValidationResult>(
       '/calls/moh/validate',
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      }
+      formData
     )
     return response.data
   }

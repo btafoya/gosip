@@ -3,6 +3,7 @@ package twilio
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -80,7 +81,12 @@ func (q *MessageQueue) Start(ctx context.Context) {
 }
 
 func (q *MessageQueue) worker(ctx context.Context) {
-	defer q.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("queue worker panic recovered", "panic", r)
+		}
+		q.wg.Done()
+	}()
 	for {
 		select {
 		case <-ctx.Done():

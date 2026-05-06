@@ -2,8 +2,10 @@ package sip
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/btafoya/gosip/internal/config"
@@ -152,15 +154,219 @@ func (s *Server) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	s.sessions.Add(session)
 	s.incrementCallCount()
 
-	// TODO: Validate request is from Twilio and route to appropriate device
+	// Basic source validation / logging
+	sourceIP := getSourceIP(req)
+	fromHost := ""
+	if req.From() != nil {
+		fromHost = req.From().Address.Host
+	}
+	isTwilio := strings.Contains(fromHost, "twilio") || strings.HasPrefix(sourceIP, "54.") || strings.HasPrefix(sourceIP, "34.")
 	slog.Info("Incoming call",
 		"call_id", callID,
 		"from", fromURI.String(),
 		"to", toURI.String(),
+		"source_ip", sourceIP,
+		"twilio_source", isTwilio,
 	)
 
-	// For now, send 486 Busy Here until call routing is implemented
-	s.sendResponse(tx, req, sip.StatusBusyHere, "Busy Here")
+	// Extract called number and look up DID
+	calledNumber := extractNumber(toURI.String())
+	if calledNumber == "" {
+		slog.Warn("Cannot extract called number from To URI", "to", toURI.String())
+		s.sendResponse(tx, req, sip.StatusNotFound, "Not Found")
+		s.decrementCallCount()
+		return
+	}
+
+	did, err := s.db.DIDs.GetByNumber(ctx, calledNumber)
+	if err != nil {
+		slog.Warn("DID lookup failed", "number", calledNumber, "error", err)
+		// Default to voicemail if DID not found
+		s.sendResponse(tx, req, sip.StatusMovedTemporarily, "Moved Temporarily")
+		return
+	}
+
+	session.DIDID = &did.ID
+
+	// Get enabled routes for this DID
+	routes, err := s.db.Routes.GetEnabledByDID(ctx, did.ID)
+	if err != nil {
+		slog.Error("Failed to get routes for DID", "did_id", did.ID, "error", err)
+		s.sendResponse(tx, req, sip.StatusMovedTemporarily, "Moved Temporarily")
+		return
+	}
+
+	// Evaluate routes and execute first matching action
+	matched := s.evaluateAndExecuteRoute(ctx, req, tx, session, routes)
+	if !matched {
+		// No route matched - default to voicemail
+		slog.Info("No route matched, sending to voicemail", "did", did.Number)
+		s.sendResponse(tx, req, sip.StatusMovedTemporarily, "Moved Temporarily")
+	}
+}
+
+// evaluateAndExecuteRoute evaluates routes in priority order and executes the first match.
+// It returns true if a route was matched and handled.
+func (s *Server) evaluateAndExecuteRoute(ctx context.Context, req *sip.Request, tx sip.ServerTransaction, session *CallSession, routes []*models.Route) bool {
+	for _, route := range routes {
+		if !s.routeConditionMatches(route) {
+			continue
+		}
+
+		switch route.ActionType {
+		case "ring":
+			s.handleRingAction(ctx, req, tx, session, route)
+			return true
+		case "voicemail":
+			s.sendResponse(tx, req, sip.StatusMovedTemporarily, "Moved Temporarily")
+			return true
+		case "reject":
+			var status sip.StatusCode = sip.StatusBusyHere
+			if len(route.ActionData) > 0 {
+				var data map[string]interface{}
+				if err := json.Unmarshal(route.ActionData, &data); err == nil {
+					if reason, ok := data["reason"].(string); ok && reason == "decline" {
+						status = sip.StatusCode(603)
+					}
+				}
+			}
+			s.sendResponse(tx, req, status, "")
+			return true
+		default:
+			slog.Warn("Unknown route action type", "action", route.ActionType, "route_id", route.ID)
+		}
+	}
+	return false
+}
+
+// routeConditionMatches checks whether a route's condition is currently satisfied.
+func (s *Server) routeConditionMatches(route *models.Route) bool {
+	switch route.ConditionType {
+	case "default":
+		return true
+	case "time":
+		var tc models.TimeCondition
+		if err := json.Unmarshal(route.ConditionData, &tc); err != nil {
+			slog.Warn("Failed to parse time condition", "route_id", route.ID, "error", err)
+			return false
+		}
+		return timeConditionMatches(&tc)
+	default:
+		// Unknown condition types are treated as non-matching for safety
+		return false
+	}
+}
+
+// timeConditionMatches returns true if the current time satisfies the condition.
+func timeConditionMatches(tc *models.TimeCondition) bool {
+	loc := time.Local
+	if tc.Timezone != "" {
+		var err error
+		loc, err = time.LoadLocation(tc.Timezone)
+		if err != nil {
+			slog.Warn("Failed to load timezone", "timezone", tc.Timezone, "error", err)
+			loc = time.Local
+		}
+	}
+
+	now := time.Now().In(loc)
+
+	// Check day of week
+	if len(tc.Days) > 0 {
+		found := false
+		for _, d := range tc.Days {
+			if int(now.Weekday()) == d {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Parse and check hour ranges
+	if tc.StartTime != "" && tc.EndTime != "" {
+		start, err1 := time.ParseInLocation("15:04", tc.StartTime, loc)
+		end, err2 := time.ParseInLocation("15:04", tc.EndTime, loc)
+		if err1 != nil || err2 != nil {
+			slog.Warn("Failed to parse time range", "start", tc.StartTime, "end", tc.EndTime)
+			return false
+		}
+
+		currentMinutes := now.Hour()*60 + now.Minute()
+		startMinutes := start.Hour()*60 + start.Minute()
+		endMinutes := end.Hour()*60 + end.Minute()
+
+		if endMinutes < startMinutes {
+			// Wraps past midnight
+			if currentMinutes < startMinutes && currentMinutes > endMinutes {
+				return false
+			}
+		} else {
+			if currentMinutes < startMinutes || currentMinutes > endMinutes {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// handleRingAction processes a "ring" route action by looking up devices and
+// returning a 302 Redirect to their registered contacts.
+func (s *Server) handleRingAction(ctx context.Context, req *sip.Request, tx sip.ServerTransaction, session *CallSession, route *models.Route) {
+	var action models.RingAction
+	if err := json.Unmarshal(route.ActionData, &action); err != nil {
+		slog.Error("Failed to parse ring action data", "route_id", route.ID, "error", err)
+		s.sendResponse(tx, req, sip.StatusMovedTemporarily, "Moved Temporarily")
+		return
+	}
+
+	if len(action.DeviceIDs) == 0 {
+		slog.Warn("Ring action has no devices", "route_id", route.ID)
+		s.sendResponse(tx, req, sip.StatusMovedTemporarily, "Moved Temporarily")
+		return
+	}
+
+	// Build redirect contacts from device registrations
+	var contacts []string
+	for _, deviceID := range action.DeviceIDs {
+		device, err := s.db.Devices.GetByID(ctx, deviceID)
+		if err != nil {
+			slog.Warn("Failed to look up device for ring action", "device_id", deviceID, "error", err)
+			continue
+		}
+
+		// Find active registration for device
+		regs, err := s.registrar.GetActiveRegistrations(ctx)
+		if err != nil {
+			slog.Warn("Failed to get registrations", "error", err)
+			continue
+		}
+
+		for _, reg := range regs {
+			if reg.DeviceID == device.ID {
+				contacts = append(contacts, reg.Contact)
+				break
+			}
+		}
+	}
+
+	if len(contacts) == 0 {
+		slog.Info("No registered devices for ring action, falling back to voicemail", "route_id", route.ID)
+		s.sendResponse(tx, req, sip.StatusMovedTemporarily, "Moved Temporarily")
+		return
+	}
+
+	// Send 302 Redirect with device contacts
+	res := sip.NewResponseFromRequest(req, sip.StatusMovedTemporarily, "Moved Temporarily", nil)
+	for _, contact := range contacts {
+		res.AppendHeader(sip.NewHeader("Contact", "<"+contact+">"))
+	}
+	if err := tx.Respond(res); err != nil {
+		slog.Error("Failed to send 302 redirect", "error", err)
+	}
 }
 
 // handleAck processes ACK requests

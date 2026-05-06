@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -62,21 +63,21 @@ func (h *WebhookHandler) VoiceIncoming(w http.ResponseWriter, r *http.Request) {
 	routes, err := h.deps.DB.Routes.GetEnabledByDID(r.Context(), did.ID)
 	if err != nil || len(routes) == 0 {
 		// Default: send to voicemail
-		h.respondTwiML(w, h.voicemailTwiML(did.ID, from))
+		h.respondTwiML(w, h.voicemailTwiML(r.Context(), did.ID, from))
 		return
 	}
 
 	// Evaluate rules in priority order
 	for _, route := range routes {
 		if h.evaluateCondition(route, from) {
-			twiml := h.executeAction(route, did, from, callSID)
+			twiml := h.executeAction(r.Context(), route, did, from, callSID)
 			h.respondTwiML(w, twiml)
 			return
 		}
 	}
 
 	// No matching rule, go to voicemail
-	h.respondTwiML(w, h.voicemailTwiML(did.ID, from))
+	h.respondTwiML(w, h.voicemailTwiML(r.Context(), did.ID, from))
 }
 
 // VoiceStatus handles voice call status callbacks
@@ -147,17 +148,17 @@ func (h *WebhookHandler) VoicemailRecording(w http.ResponseWriter, r *http.Reque
 	if h.deps.Twilio != nil {
 		transcriptionEnabled, _ := h.deps.DB.Config.Get(r.Context(), "transcription_enabled")
 		if transcriptionEnabled == "true" {
-			go h.deps.Twilio.RequestTranscription(recordingSID, voicemail.ID)
+				safeGo(func() { h.deps.Twilio.RequestTranscription(recordingSID, voicemail.ID) })
 		}
 	}
 
 	// Send notifications
-	go h.sendVoicemailNotification(voicemail)
+	safeGo(func() { h.sendVoicemailNotification(voicemail) })
 
 	// Trigger MWI notification for new voicemail
 	if voicemail.UserID != nil {
 		mwiNotifier := NewMWINotifier(h.deps)
-		go mwiNotifier.UpdateMWIForDID(r.Context(), *voicemail.UserID)
+		safeGo(func() { mwiNotifier.UpdateMWIForDID(r.Context(), *voicemail.UserID) })
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -251,7 +252,7 @@ func (h *WebhookHandler) SMSIncoming(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send notifications
-	go h.sendSMSNotification(message)
+	safeGo(func() { h.sendSMSNotification(message) })
 
 	h.respondTwiML(w, "")
 }
@@ -335,8 +336,8 @@ func (h *WebhookHandler) rejectTwiML(reason string) string {
 	return `<Response><Reject reason="` + escapeXML(reason) + `"/></Response>`
 }
 
-func (h *WebhookHandler) voicemailTwiML(didID int64, from string) string {
-	greeting, _ := h.deps.DB.Config.Get(nil, "voicemail_greeting")
+func (h *WebhookHandler) voicemailTwiML(ctx context.Context, didID int64, from string) string {
+	greeting, _ := h.deps.DB.Config.Get(ctx, "voicemail_greeting")
 	if greeting == "" {
 		greeting = "Please leave a message after the beep."
 	}
@@ -395,7 +396,7 @@ func (h *WebhookHandler) evaluateCondition(route *models.Route, callerID string)
 	return false
 }
 
-func (h *WebhookHandler) executeAction(route *models.Route, did *models.DID, from, callSID string) string {
+func (h *WebhookHandler) executeAction(ctx context.Context, route *models.Route, did *models.DID, from, callSID string) string {
 	switch route.ActionType {
 	case "ring":
 		var data struct {
@@ -411,21 +412,21 @@ func (h *WebhookHandler) executeAction(route *models.Route, did *models.DID, fro
 
 			var dialTargets []string
 			for _, deviceID := range data.Devices {
-				device, err := h.deps.DB.Devices.GetByID(nil, deviceID)
+				device, err := h.deps.DB.Devices.GetByID(ctx, deviceID)
 				if err == nil {
 					dialTargets = append(dialTargets, `<Sip>`+escapeXML(device.Username)+`@sip.gosip.local</Sip>`)
 				}
 			}
 
 			if len(dialTargets) == 0 {
-				return h.voicemailTwiML(did.ID, from)
+				return h.voicemailTwiML(ctx, did.ID, from)
 			}
 
 			return `<Response>
 				<Dial timeout="` + strconv.Itoa(timeout) + `" action="/api/webhooks/voice/status">
 					` + strings.Join(dialTargets, "\n") + `
 				</Dial>
-				` + h.voicemailTwiML(did.ID, from) + `
+				` + h.voicemailTwiML(ctx, did.ID, from) + `
 			</Response>`
 		}
 
@@ -442,13 +443,13 @@ func (h *WebhookHandler) executeAction(route *models.Route, did *models.DID, fro
 		}
 
 	case "voicemail":
-		return h.voicemailTwiML(did.ID, from)
+		return h.voicemailTwiML(ctx, did.ID, from)
 
 	case "reject":
 		return h.rejectTwiML("rejected")
 	}
 
-	return h.voicemailTwiML(did.ID, from)
+	return h.voicemailTwiML(ctx, did.ID, from)
 }
 
 func (h *WebhookHandler) checkAutoReply(ctx context.Context, didID int64, body string) string {
@@ -532,7 +533,11 @@ func (h *SIPTrunkHandler) HandleSIPInvite(w http.ResponseWriter, r *http.Request
 	to := r.FormValue("To")
 
 	// Extract extension from SIP URI
-	toURI, _ := url.Parse("sip:" + to)
+	toURI, err := url.Parse("sip:" + to)
+	if err != nil || toURI == nil || toURI.User == nil {
+		h.respondTwiML(w, `<Response><Say>Invalid destination</Say><Hangup/></Response>`)
+		return
+	}
 	extension := strings.Split(toURI.User.Username(), "@")[0]
 
 	// Look up device by extension/username
@@ -550,8 +555,8 @@ func (h *SIPTrunkHandler) HandleSIPInvite(w http.ResponseWriter, r *http.Request
 
 	// Bridge call to internal SIP device
 	h.respondTwiML(w, `<Response>
-		<Dial callerId="`+from+`">
-			<Sip>`+device.Username+`@`+h.deps.Config.SIPDomain+`</Sip>
+		<Dial callerId="`+html.EscapeString(from)+`">
+			<Sip>`+html.EscapeString(device.Username)+`@`+html.EscapeString(h.deps.Config.SIPDomain)+`</Sip>
 		</Dial>
 	</Response>`)
 }

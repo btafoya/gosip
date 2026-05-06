@@ -39,3 +39,5 @@ ALTER TABLE devices_old RENAME TO devices;
 -- Recreate indexes
 CREATE INDEX IF NOT EXISTS idx_devices_username ON devices(username);
 CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_devices_mac ON devices(mac_address);
+CREATE INDEX IF NOT EXISTS idx_devices_provisioning_status ON devices(provisioning_status);

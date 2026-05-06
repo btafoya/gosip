@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/btafoya/gosip/internal/config"
 	"github.com/btafoya/gosip/internal/db"
@@ -57,12 +56,20 @@ func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total, _ := h.deps.DB.Devices.Count(r.Context())
+	total, err := h.deps.DB.Devices.Count(r.Context())
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
 
 	// Get registration status for each device (batch lookup to avoid N+1)
 	var activeMap map[int64]bool
 	if h.deps.SIP != nil && h.deps.SIP.GetRegistrar() != nil {
-		activeRegs, _ := h.deps.SIP.GetRegistrar().GetActiveRegistrations(r.Context())
+		activeRegs, err := h.deps.SIP.GetRegistrar().GetActiveRegistrations(r.Context())
+		if err != nil {
+			WriteInternalError(w)
+			return
+		}
 		activeMap = make(map[int64]bool, len(activeRegs))
 		for _, reg := range activeRegs {
 			activeMap[reg.DeviceID] = true
@@ -103,12 +110,18 @@ func (h *DeviceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var errors []FieldError
 	if req.Name == "" {
 		errors = append(errors, FieldError{Field: "name", Message: "Name is required"})
+	} else if len(req.Name) > 255 {
+		errors = append(errors, FieldError{Field: "name", Message: "Name must not exceed 255 characters"})
 	}
 	if req.Username == "" {
 		errors = append(errors, FieldError{Field: "username", Message: "Username is required"})
+	} else if len(req.Username) > 64 {
+		errors = append(errors, FieldError{Field: "username", Message: "Username must not exceed 64 characters"})
 	}
 	if req.Password == "" {
 		errors = append(errors, FieldError{Field: "password", Message: "Password is required"})
+	} else if len(req.Password) > 128 {
+		errors = append(errors, FieldError{Field: "password", Message: "Password must not exceed 128 characters"})
 	}
 	if req.DeviceType == "" {
 		req.DeviceType = "softphone"
@@ -136,14 +149,10 @@ func (h *DeviceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.deps.DB.Devices.Create(r.Context(), device); err != nil {
-		errMsg := err.Error()
-		// Check for specific SQLite constraint errors
-		if strings.Contains(errMsg, "UNIQUE constraint failed") {
+		if isUniqueConstraintError(err) {
 			WriteError(w, http.StatusConflict, ErrCodeConflict, "Device with this username already exists", nil)
-		} else if strings.Contains(errMsg, "CHECK constraint failed") {
-			WriteError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid device type", nil)
 		} else {
-			WriteError(w, http.StatusInternalServerError, ErrCodeInternal, "Failed to create device: "+errMsg, nil)
+			WriteInternalError(w)
 		}
 		return
 	}

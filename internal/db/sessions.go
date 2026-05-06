@@ -188,7 +188,7 @@ func (r *SessionRepository) ListByUserID(ctx context.Context, userID int64) ([]*
 		sessions = append(sessions, &session)
 	}
 
-	return sessions, nil
+	return sessions, rows.Err()
 }
 
 // CountByUserID returns the number of active sessions for a user

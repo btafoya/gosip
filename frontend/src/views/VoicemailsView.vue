@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { Voicemail, Play, Pause, Trash2, RefreshCw, Mail, MailOpen, Download, Bell, BellOff, ChevronDown, ChevronUp, Phone, Send } from 'lucide-vue-next'
 import api from '@/api/client'
 
@@ -123,6 +123,7 @@ function playVoicemail(vm: VoicemailRecord) {
   if (playingId.value === vm.id) {
     // Stop playing
     if (audioRef.value) {
+      audioRef.value.onended = null
       audioRef.value.pause()
       audioRef.value = null
     }
@@ -132,13 +133,17 @@ function playVoicemail(vm: VoicemailRecord) {
 
   // Stop any current playback
   if (audioRef.value) {
+    audioRef.value.onended = null
     audioRef.value.pause()
   }
 
   // Start new playback
   playingId.value = vm.id
   audioRef.value = new Audio(vm.recording_url)
-  audioRef.value.play()
+  audioRef.value.play().catch(() => {
+    playingId.value = null
+    audioRef.value = null
+  })
   audioRef.value.onended = () => {
     playingId.value = null
     audioRef.value = null
@@ -149,6 +154,14 @@ function playVoicemail(vm: VoicemailRecord) {
     }
   }
 }
+
+onUnmounted(() => {
+  if (audioRef.value) {
+    audioRef.value.onended = null
+    audioRef.value.pause()
+    audioRef.value = null
+  }
+})
 
 function formatDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60)

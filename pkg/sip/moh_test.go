@@ -172,11 +172,13 @@ func TestMOHManager_EnableDisable(t *testing.T) {
 func TestMOHManager_SetAudioPath(t *testing.T) {
 	mgr := NewMOHManager(MOHConfig{Enabled: true})
 
-	mgr.SetAudioPath("/new/path/moh.wav")
+	if err := mgr.SetAudioPath("/var/lib/gosip/moh/new.wav"); err != nil {
+		t.Fatalf("SetAudioPath() error = %v", err)
+	}
 
 	status := mgr.GetStatus()
-	if status.AudioPath != "/new/path/moh.wav" {
-		t.Errorf("AudioPath = %q, want %q", status.AudioPath, "/new/path/moh.wav")
+	if status.AudioPath != "/var/lib/gosip/moh/new.wav" {
+		t.Errorf("AudioPath = %q, want %q", status.AudioPath, "/var/lib/gosip/moh/new.wav")
 	}
 }
 

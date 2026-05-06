@@ -3,7 +3,17 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
+
+// isUniqueConstraintError checks if a database error is a SQLite unique or CHECK constraint violation.
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") || strings.Contains(msg, "CHECK constraint failed")
+}
 
 // ErrorResponse follows the standard API error format from REQUIREMENTS.md
 type ErrorResponse struct {

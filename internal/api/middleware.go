@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -178,9 +180,9 @@ func validateSession(ctx context.Context, database *db.DB, token string) (*model
 
 			// Update database asynchronously
 			if database != nil && database.Sessions != nil {
-				go func() {
+				safeGo(func() {
 					_ = database.Sessions.UpdateActivity(context.Background(), token, newExpiry)
-				}()
+				})
 			}
 
 			// Update cache
@@ -261,6 +263,46 @@ func cleanupExpiredSessions() {
 			delete(cache.sessions, token)
 		}
 	}
+}
+
+func init() {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("session cache cleanup panic recovered", "panic", r)
+			}
+		}()
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanupExpiredSessions()
+		}
+	}()
+}
+
+// TrustedProxyIP sets r.RemoteAddr from X-Forwarded-For / X-Real-IP only when
+// the immediate connection originates from a trusted proxy (loopback by default).
+func TrustedProxyIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isTrustedProxy(r.RemoteAddr) {
+			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+				ips := strings.Split(xff, ",")
+				r.RemoteAddr = strings.TrimSpace(ips[0])
+			} else if xri := r.Header.Get("X-Real-IP"); xri != "" {
+				r.RemoteAddr = xri
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isTrustedProxy(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // generateRandomToken creates a cryptographically secure random string token
