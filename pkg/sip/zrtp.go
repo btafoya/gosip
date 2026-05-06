@@ -451,16 +451,19 @@ func (m *ZRTPManager) cacheSession(session *ZRTPSession) {
 
 // getCacheEntry retrieves cached data for a peer
 func (m *ZRTPManager) getCacheEntry(peerZID []byte) *ZRTPCacheEntry {
+	key := hex.EncodeToString(peerZID)
 	m.cache.mu.RLock()
-	defer m.cache.mu.RUnlock()
-
-	entry, ok := m.cache.entries[hex.EncodeToString(peerZID)]
+	entry, ok := m.cache.entries[key]
+	m.cache.mu.RUnlock()
 	if !ok {
 		return nil
 	}
 
-	// Check if entry has expired
+	// Check if entry has expired and delete it
 	if time.Now().After(entry.ExpiresAt) {
+		m.cache.mu.Lock()
+		delete(m.cache.entries, key)
+		m.cache.mu.Unlock()
 		return nil
 	}
 

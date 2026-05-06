@@ -86,6 +86,11 @@ func (h *WebhookHandler) VoiceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.validateSignature(r) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
 	callSID := r.FormValue("CallSid")
 	status := r.FormValue("CallStatus")
 	duration, _ := strconv.Atoi(r.FormValue("CallDuration"))
@@ -109,6 +114,11 @@ func (h *WebhookHandler) VoiceStatus(w http.ResponseWriter, r *http.Request) {
 func (h *WebhookHandler) VoicemailRecording(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if !h.validateSignature(r) {
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
@@ -157,6 +167,11 @@ func (h *WebhookHandler) VoicemailRecording(w http.ResponseWriter, r *http.Reque
 func (h *WebhookHandler) VoicemailTranscription(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if !h.validateSignature(r) {
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
@@ -248,6 +263,11 @@ func (h *WebhookHandler) SMSStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.validateSignature(r) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
 	messageSID := r.FormValue("MessageSid")
 	status := r.FormValue("MessageStatus")
 
@@ -308,11 +328,11 @@ func (h *WebhookHandler) respondTwiML(w http.ResponseWriter, twiml string) {
 }
 
 func (h *WebhookHandler) errorTwiML(message string) string {
-	return `<Response><Say>` + message + `</Say><Hangup/></Response>`
+	return `<Response><Say>` + escapeXML(message) + `</Say><Hangup/></Response>`
 }
 
 func (h *WebhookHandler) rejectTwiML(reason string) string {
-	return `<Response><Reject reason="` + reason + `"/></Response>`
+	return `<Response><Reject reason="` + escapeXML(reason) + `"/></Response>`
 }
 
 func (h *WebhookHandler) voicemailTwiML(didID int64, from string) string {
@@ -325,8 +345,8 @@ func (h *WebhookHandler) voicemailTwiML(didID int64, from string) string {
 	actionURL := "/api/webhooks/voicemail/recording?DidId=" + strconv.FormatInt(didID, 10)
 
 	return `<Response>
-		<Say>` + greeting + `</Say>
-		<Record maxLength="180" action="` + actionURL + `" transcribe="false" playBeep="true"/>
+		<Say>` + escapeXML(greeting) + `</Say>
+		<Record maxLength="180" action="` + escapeXML(actionURL) + `" transcribe="false" playBeep="true"/>
 		<Say>Goodbye.</Say>
 	</Response>`
 }
@@ -393,7 +413,7 @@ func (h *WebhookHandler) executeAction(route *models.Route, did *models.DID, fro
 			for _, deviceID := range data.Devices {
 				device, err := h.deps.DB.Devices.GetByID(nil, deviceID)
 				if err == nil {
-					dialTargets = append(dialTargets, `<Sip>`+device.Username+`@sip.gosip.local</Sip>`)
+					dialTargets = append(dialTargets, `<Sip>`+escapeXML(device.Username)+`@sip.gosip.local</Sip>`)
 				}
 			}
 
@@ -415,8 +435,8 @@ func (h *WebhookHandler) executeAction(route *models.Route, did *models.DID, fro
 		}
 		if err := json.Unmarshal(route.ActionData, &data); err == nil {
 			return `<Response>
-				<Dial callerId="` + did.Number + `">
-					<Number>` + data.Number + `</Number>
+				<Dial callerId="` + escapeXML(did.Number) + `">
+					<Number>` + escapeXML(data.Number) + `</Number>
 				</Dial>
 			</Response>`
 		}

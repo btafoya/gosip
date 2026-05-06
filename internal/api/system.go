@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/btafoya/gosip/internal/models"
@@ -215,7 +216,7 @@ func (h *SystemHandler) SetupWizard(w http.ResponseWriter, r *http.Request) {
 	// Save SMTP settings if provided
 	if req.SMTPHost != "" {
 		h.deps.DB.Config.Set(r.Context(), "smtp_host", req.SMTPHost)
-		h.deps.DB.Config.Set(r.Context(), "smtp_port", string(rune(req.SMTPPort)))
+		h.deps.DB.Config.Set(r.Context(), "smtp_port", strconv.Itoa(req.SMTPPort))
 		h.deps.DB.Config.Set(r.Context(), "smtp_user", req.SMTPUser)
 		h.deps.DB.Config.Set(r.Context(), "smtp_password", req.SMTPPassword)
 	}

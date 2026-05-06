@@ -22,12 +22,14 @@
 - **Lines:** 310-332, 394, 418-419
 - **Issue:** `errorTwiML`, `rejectTwiML`, `voicemailTwiML`, and `executeAction` build XML by string concatenation without escaping caller-controlled values (`message`, `reason`, `greeting`, `device.Username`, `did.Number`, `data.Number`). Only `smsTwiML` calls `escapeXML`. An attacker who creates a device with username `</Sip><Redirect>tel:+19005551212</Redirect><Sip>` or crafts a DID number with XML metacharacters will have that payload stored in the DB and later injected into TwiML responses sent to Twilio, redirecting calls to arbitrary numbers.
 - **Fix:** Apply `escapeXML()` (or `html.EscapeString`) to every user-controlled value inserted into TwiML.
+- **Status:** **Fixed** (2026-05-06)
 
 ### C2. Most Twilio webhooks skip signature validation — trivial spoofing
 - **File:** `internal/api/webhooks.go`
 - **Lines:** 83 (`VoiceStatus`), 109 (`VoicemailRecording`), 157 (`VoicemailTranscription`), 245 (`SMSStatus`)
 - **Issue:** Only `VoiceIncoming:38` calls `validateSignature()`. The other four webhook endpoints accept any POST request. An attacker can inject fake call status updates, create fake voicemail records, trigger fake transcription completions, and inject fake SMS messages.
 - **Fix:** Add `if !h.validateSignature(r) { return }` guard to every webhook handler.
+- **Status:** **Fixed** (2026-05-06)
 
 ### C3. Fire-and-forget goroutines crash the process on panic
 - **Files:** `internal/api/webhooks.go:140,145,150,239`, `internal/api/middleware.go:181`, `internal/twilio/queue.go:51`
@@ -39,18 +41,21 @@
 - **Lines:** 495-521
 - **Issue:** `RestoreBackup` closes `db.conn` and replaces it without any mutex or synchronization. If another goroutine executes a query concurrently, it will panic or fail unpredictably. Worse, if `copyFile` or `conn.PingContext` fails after the connection is closed, the error is returned but `db.conn` is never reopened, leaving the `DB` object permanently unusable for the process lifetime.
 - **Fix:** Protect `db.conn` and all repository pointers with a `sync.RWMutex`. On restore failure, reopen the original database or fail fast with a clear fatal error.
+- **Status:** **Fixed** (2026-05-06)
 
 ### C5. Migration 003 down destroys provisioning data permanently
 - **File:** `internal/db/migrations/003_provisioning.down.sql`
 - **Lines:** 22-36
 - **Issue:** The down migration recreates `devices_backup` with only the original 8 columns (no `mac_address`, `vendor`, `model`, `firmware_version`, `provisioning_status`, `last_config_fetch`, `last_registration`, or `config_template`). The `INSERT` also selects only those 8 columns. Rolling back migration 003 permanently drops all provisioning data.
 - **Fix:** Recreate `devices_backup` with the full schema as it existed after `003.up`, or at minimum include all columns in the `SELECT`.
+- **Status:** **Fixed** (2026-05-06)
 
 ### C6. BYE / CANCEL / REFER call teardown spoofing
 - **File:** `pkg/sip/handlers.go`
 - **Lines:** 173-214 (`handleBye`), 218-235 (`handleCancel`), 238-246 (`handleRefer`)
 - **Issue:** These handlers accept BYE/CANCEL/REFER for any `Call-ID` and terminate or transfer the session without validating the `From`/`To` tags against the dialog state, or verifying the request originates from a registered device. An attacker who knows (or guesses) a `Call-ID` can tear down or transfer any active call.
 - **Fix:** Verify the request originates from a registered device or Twilio before acting on mid-call requests. Validate dialog tags.
+- **Status:** **Fixed** (2026-05-06)
 
 ### C7. Frontend open redirect after login
 - **File:** `frontend/src/views/LoginView.vue`
@@ -67,12 +72,14 @@
 - **Lines:** 47-52
 - **Issue:** `MessageQueue.Enqueue` spawns `go q.processMessage(msg)` for each additional message when the queue (size 1000) is full. Under load this exhausts memory and goroutine limits.
 - **Fix:** Use a bounded worker pool or drop messages with an error.
+- **Status:** **Fixed** (2026-05-06)
 
 ### H2. ZRTP cache unbounded memory growth
 - **File:** `pkg/sip/zrtp.go`
 - **Lines:** 410-450, 452-468
 - **Issue:** `cacheSession` adds entries to `m.cache.entries` forever. `getCacheEntry` checks expiry but never deletes expired entries. Long-running server leaks memory.
 - **Fix:** Expire entries during lookup or run a periodic cleanup goroutine.
+- **Status:** **Fixed** (2026-05-06)
 
 ### H3. SIP rejects all external incoming calls
 - **File:** `pkg/sip/handlers.go`
@@ -85,18 +92,21 @@
 - **Line:** 218
 - **Issue:** `h.deps.DB.Config.Set(r.Context(), "smtp_port", string(rune(req.SMTPPort)))` converts the integer to a Unicode rune string, not a decimal string. For example, 587 becomes a single glyph (U+024B), not `"587"`. SMTP configuration is permanently broken after saving settings.
 - **Fix:** Use `strconv.Itoa(req.SMTPPort)`.
+- **Status:** **Fixed** (2026-05-06)
 
 ### H5. Negative offset panics voicemail list
 - **File:** `internal/api/voicemails.go`
 - **Lines:** 70-78
 - **Issue:** `voicemails[offset:end]` slices with no lower-bound check. `offset` from `strconv.Atoi` can be negative. `offset=-100` causes an index-out-of-range panic.
 - **Fix:** Validate `offset >= 0` and `limit > 0` on all list endpoints.
+- **Status:** **Fixed** (2026-05-06)
 
 ### H6. Panic on short provisioning token in QR code
 - **File:** `internal/api/provisioning.go`
 - **Line:** 572
 - **Issue:** `w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"provision-%s.png\"", tokenStr[:8]))` panics if the DB returns a token shorter than 8 characters.
 - **Fix:** Check `len(tokenStr) >= 8` before slicing.
+- **Status:** **Fixed** (2026-05-06)
 
 ### H7. Login rate-limit bypass via X-Forwarded-For
 - **File:** `internal/api/routes.go`
@@ -109,6 +119,7 @@
 - **Lines:** 165-207
 - **Issue:** `ChangePassword` updates the password hash but does not kill existing sessions. A stolen session token remains valid after the user changes their password.
 - **Fix:** Delete all sessions for the user on password change.
+- **Status:** **Fixed** (2026-05-06)
 
 ### H9. MOH file path traversal + no size limit
 - **File:** `pkg/sip/moh.go`
@@ -121,6 +132,7 @@
 - **Lines:** 78-85
 - **Issue:** `close(q.stopChan)` has no guard against a second call. Calling `Stop()` twice panics.
 - **Fix:** Use `sync.Once` or set `stopChan = nil` after close.
+- **Status:** **Fixed** (2026-05-06)
 
 ### H11. Backup filename collision
 - **File:** `internal/db/db.go`

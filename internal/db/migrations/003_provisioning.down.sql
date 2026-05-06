@@ -27,12 +27,20 @@ CREATE TABLE devices_backup (
     password_hash TEXT NOT NULL,
     device_type TEXT CHECK(device_type IN ('grandstream', 'softphone', 'webrtc')),
     recording_enabled BOOLEAN DEFAULT FALSE,
+    mac_address TEXT,
+    vendor TEXT,
+    model TEXT,
+    firmware_version TEXT,
+    provisioning_status TEXT CHECK(provisioning_status IN ('pending', 'provisioned', 'failed', 'unknown')) DEFAULT 'unknown',
+    last_config_fetch DATETIME,
+    last_registration DATETIME,
+    config_template TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Copy data to backup
-INSERT INTO devices_backup (id, user_id, name, username, password_hash, device_type, recording_enabled, created_at)
-SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, created_at FROM devices;
+INSERT INTO devices_backup (id, user_id, name, username, password_hash, device_type, recording_enabled, mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template, created_at)
+SELECT id, user_id, name, username, password_hash, device_type, recording_enabled, mac_address, vendor, model, firmware_version, provisioning_status, last_config_fetch, last_registration, config_template, created_at FROM devices;
 
 -- Drop original table
 DROP TABLE devices;

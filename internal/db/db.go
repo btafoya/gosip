@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -25,6 +26,7 @@ var migrationsFS embed.FS
 type DB struct {
 	conn   *sql.DB
 	dbPath string // Path to the database file
+	mu     sync.RWMutex
 
 	// Backup configuration
 	backupsDir string
@@ -505,6 +507,13 @@ func (db *DB) RestoreBackup(ctx context.Context, filename string) error {
 	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000", db.dbPath)
 	conn, err := sql.Open("sqlite3", dsn)
 	if err != nil {
+		_ = copyFile(preRestorePath, db.dbPath)
+		origConn, _ := sql.Open("sqlite3", dsn)
+		if origConn != nil {
+			db.mu.Lock()
+			db.conn = origConn
+			db.mu.Unlock()
+		}
 		return fmt.Errorf("failed to reopen database: %w", err)
 	}
 
@@ -514,10 +523,18 @@ func (db *DB) RestoreBackup(ctx context.Context, filename string) error {
 
 	if err := conn.PingContext(ctx2); err != nil {
 		conn.Close()
+		_ = copyFile(preRestorePath, db.dbPath)
+		origConn, _ := sql.Open("sqlite3", dsn)
+		if origConn != nil {
+			db.mu.Lock()
+			db.conn = origConn
+			db.mu.Unlock()
+		}
 		return fmt.Errorf("failed to verify restored database: %w", err)
 	}
 
-	// Update the connection
+	// Update the connection and reinitialize repositories
+	db.mu.Lock()
 	db.conn = conn
 
 	// Reinitialize all repositories with new connection
@@ -536,6 +553,7 @@ func (db *DB) RestoreBackup(ctx context.Context, filename string) error {
 	db.ProvisioningTokens = NewProvisioningTokenRepository(conn)
 	db.ProvisioningProfiles = NewProvisioningProfileRepository(conn)
 	db.DeviceEvents = NewDeviceEventRepository(conn)
+	db.mu.Unlock()
 
 	slog.Info("Database restored successfully", "filename", filename)
 	return nil

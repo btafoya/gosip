@@ -67,14 +67,18 @@ func (h *VoicemailHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		total = len(voicemails)
 		// Apply manual pagination to unread list
-		end := offset + limit
-		if end > len(voicemails) {
-			end = len(voicemails)
-		}
-		if offset < len(voicemails) {
-			voicemails = voicemails[offset:end]
-		} else {
+		if offset < 0 || limit <= 0 {
 			voicemails = nil
+		} else {
+			end := offset + limit
+			if end > len(voicemails) {
+				end = len(voicemails)
+			}
+			if offset < len(voicemails) {
+				voicemails = voicemails[offset:end]
+			} else {
+				voicemails = nil
+			}
 		}
 	} else if didIDStr != "" {
 		userID, parseErr := strconv.ParseInt(didIDStr, 10, 64)

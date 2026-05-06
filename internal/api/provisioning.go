@@ -569,7 +569,13 @@ func (h *ProvisioningHandler) GetTokenQRCode(w http.ResponseWriter, r *http.Requ
 
 	if format == "png" {
 		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"provision-%s.png\"", tokenStr[:8]))
+		var tokenPrefix string
+		if len(tokenStr) >= 8 {
+			tokenPrefix = tokenStr[:8]
+		} else {
+			tokenPrefix = tokenStr
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"provision-%s.png\"", tokenPrefix))
 		w.WriteHeader(http.StatusOK)
 		w.Write(qrData)
 	} else {

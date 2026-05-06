@@ -177,6 +177,11 @@ func (s *Server) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 	// Find and terminate the session
 	session := s.sessions.Get(callID)
 	if session != nil {
+		if !validateDialog(req, session) {
+			slog.Warn("BYE dialog validation failed", "call_id", callID)
+			s.sendResponse(tx, req, sip.StatusForbidden, "Forbidden")
+			return
+		}
 		// Stop MOH if active
 		if s.mohMgr != nil && s.mohMgr.IsActive(callID) {
 			s.mohMgr.Stop(callID)
@@ -222,6 +227,11 @@ func (s *Server) handleCancel(req *sip.Request, tx sip.ServerTransaction) {
 	// Find and terminate the session if in ringing state
 	session := s.sessions.Get(callID)
 	if session != nil {
+		if !validateDialog(req, session) {
+			slog.Warn("CANCEL dialog validation failed", "call_id", callID)
+			s.sendResponse(tx, req, sip.StatusForbidden, "Forbidden")
+			return
+		}
 		if session.GetState() == CallStateRinging {
 			if err := session.SetState(CallStateTerminated); err != nil {
 				slog.Warn("Failed to set terminated state", "error", err, "call_id", callID)
@@ -238,6 +248,14 @@ func (s *Server) handleCancel(req *sip.Request, tx sip.ServerTransaction) {
 func (s *Server) handleRefer(req *sip.Request, tx sip.ServerTransaction) {
 	callID := req.CallID().Value()
 	slog.Debug("Received REFER request", "call_id", callID)
+
+	// Validate dialog before allowing transfer
+	session := s.sessions.Get(callID)
+	if session != nil && !validateDialog(req, session) {
+		slog.Warn("REFER dialog validation failed", "call_id", callID)
+		s.sendResponse(tx, req, sip.StatusForbidden, "Forbidden")
+		return
+	}
 
 	// Delegate to transfer manager
 	if err := s.transferMgr.HandleRefer(req, tx); err != nil {

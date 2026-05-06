@@ -2,6 +2,7 @@ package twilio
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -20,12 +21,14 @@ type QueuedMessage struct {
 
 // MessageQueue manages a queue of outbound messages with retry logic
 type MessageQueue struct {
-	client    *Client
-	messages  chan *QueuedMessage
-	mu        sync.RWMutex
-	pending   map[string]*QueuedMessage
-	running   bool
-	stopChan  chan struct{}
+	client   *Client
+	messages chan *QueuedMessage
+	mu       sync.RWMutex
+	pending  map[string]*QueuedMessage
+	running  bool
+	stopOnce sync.Once
+	stopChan chan struct{}
+	wg       sync.WaitGroup
 }
 
 // NewMessageQueue creates a new message queue
@@ -47,8 +50,13 @@ func (q *MessageQueue) Enqueue(msg *QueuedMessage) {
 	select {
 	case q.messages <- msg:
 	default:
-		// Queue full, process synchronously
-		go q.processMessage(msg)
+		// Queue full, drop message
+		q.mu.Lock()
+		delete(q.pending, msg.ID)
+		q.mu.Unlock()
+		if msg.Callback != nil {
+			msg.Callback("", errors.New("queue full"))
+		}
 	}
 }
 
@@ -60,8 +68,19 @@ func (q *MessageQueue) Start(ctx context.Context) {
 		return
 	}
 	q.running = true
+	q.stopChan = make(chan struct{})
+	q.stopOnce = sync.Once{}
 	q.mu.Unlock()
 
+	workerCount := 4
+	for i := 0; i < workerCount; i++ {
+		q.wg.Add(1)
+		go q.worker(ctx)
+	}
+}
+
+func (q *MessageQueue) worker(ctx context.Context) {
+	defer q.wg.Done()
 	for {
 		select {
 		case <-ctx.Done():
@@ -77,11 +96,17 @@ func (q *MessageQueue) Start(ctx context.Context) {
 // Stop stops the queue processor
 func (q *MessageQueue) Stop() {
 	q.mu.Lock()
-	if q.running {
-		q.running = false
-		close(q.stopChan)
+	if !q.running {
+		q.mu.Unlock()
+		return
 	}
+	q.running = false
 	q.mu.Unlock()
+
+	q.stopOnce.Do(func() {
+		close(q.stopChan)
+	})
+	q.wg.Wait()
 }
 
 func (q *MessageQueue) processMessage(msg *QueuedMessage) {

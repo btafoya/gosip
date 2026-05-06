@@ -390,6 +390,22 @@ func getTag(header *sip.FromHeader) string {
 	return ""
 }
 
+func getToTag(header *sip.ToHeader) string {
+	if header == nil {
+		return ""
+	}
+	if tag, ok := header.Params.Get("tag"); ok {
+		return tag
+	}
+	return ""
+}
+
+func validateDialog(req *sip.Request, session *CallSession) bool {
+	fromTag := getTag(req.From())
+	toTag := getToTag(req.To())
+	return fromTag == session.FromTag || fromTag == session.ToTag || toTag == session.FromTag || toTag == session.ToTag
+}
+
 func extractNumber(uri string) string {
 	// Extract number from sip:number@host format
 	// Simple extraction - can be enhanced

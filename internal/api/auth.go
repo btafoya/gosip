@@ -203,6 +203,12 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate all existing sessions for this user
+	if err := h.deps.DB.Sessions.DeleteByUserID(r.Context(), user.ID); err != nil {
+		WriteInternalError(w)
+		return
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]string{"message": "Password updated successfully"})
 }
 
