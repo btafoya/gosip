@@ -78,3 +78,7 @@ config.local.yaml
 config.local.json
 
 .serena/
+.agents/
+
+skills-lock.json
+package-lock.json
