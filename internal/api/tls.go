@@ -12,6 +12,11 @@ import (
 	"github.com/btafoya/gosip/pkg/sip"
 )
 
+// containsPathTraversal checks if a file path contains directory traversal sequences.
+func containsPathTraversal(path string) bool {
+	return strings.Contains(path, "..")
+}
+
 // TLSHandler handles TLS configuration and status API endpoints
 type TLSHandler struct {
 	deps *Dependencies
@@ -108,6 +113,20 @@ func (h *TLSHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	var req TLSConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteValidationError(w, "Invalid request body", nil)
+		return
+	}
+
+	// Validate certificate paths for directory traversal
+	if req.CertFile != "" && containsPathTraversal(req.CertFile) {
+		WriteValidationError(w, "Invalid cert_file", []FieldError{
+			{Field: "cert_file", Message: "Path contains invalid traversal sequences"},
+		})
+		return
+	}
+	if req.KeyFile != "" && containsPathTraversal(req.KeyFile) {
+		WriteValidationError(w, "Invalid key_file", []FieldError{
+			{Field: "key_file", Message: "Path contains invalid traversal sequences"},
+		})
 		return
 	}
 

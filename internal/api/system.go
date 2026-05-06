@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/btafoya/gosip/internal/models"
@@ -62,7 +63,9 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	// Parse SMTP port
 	smtpPort := 587
 	if portStr := cfg["smtp_port"]; portStr != "" {
-		fmt.Sscanf(portStr, "%d", &smtpPort)
+		if _, err := fmt.Sscanf(portStr, "%d", &smtpPort); err != nil {
+			smtpPort = 587
+		}
 	}
 
 	// Build response with actual values (this endpoint is admin-only)
@@ -199,6 +202,8 @@ func (h *SystemHandler) SetupWizard(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AdminEmail == "" {
 		errors = append(errors, FieldError{Field: "admin_email", Message: "Admin email is required"})
+	} else if !strings.Contains(req.AdminEmail, "@") {
+		errors = append(errors, FieldError{Field: "admin_email", Message: "Invalid email format"})
 	}
 	if len(req.AdminPassword) < 8 {
 		errors = append(errors, FieldError{Field: "admin_password", Message: "Admin password must be at least 8 characters"})

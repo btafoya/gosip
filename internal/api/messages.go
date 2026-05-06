@@ -39,18 +39,34 @@ type MessageResponse struct {
 
 // List returns messages with filtering and pagination
 func (h *MessageHandler) List(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	didIDStr := r.URL.Query().Get("did_id")
-	direction := r.URL.Query().Get("direction")
-	remoteNumber := r.URL.Query().Get("remote_number")
-
-	if limit == 0 {
-		limit = config.DefaultPageSize
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+	limit := config.DefaultPageSize
+	if limitStr != "" {
+		var parseErr error
+		limit, parseErr = strconv.Atoi(limitStr)
+		if parseErr != nil || limit <= 0 {
+			WriteValidationError(w, "Invalid limit", []FieldError{{Field: "limit", Message: "Limit must be a positive integer"}})
+			return
+		}
 	}
 	if limit > config.MaxPageSize {
 		limit = config.MaxPageSize
 	}
+
+	offset := 0
+	if offsetStr != "" {
+		var parseErr error
+		offset, parseErr = strconv.Atoi(offsetStr)
+		if parseErr != nil || offset < 0 {
+			WriteValidationError(w, "Invalid offset", []FieldError{{Field: "offset", Message: "Offset must be a non-negative integer"}})
+			return
+		}
+	}
+
+	didIDStr := r.URL.Query().Get("did_id")
+	direction := r.URL.Query().Get("direction")
+	remoteNumber := r.URL.Query().Get("remote_number")
 
 	var messages []*models.Message
 	var total int
@@ -60,32 +76,37 @@ func (h *MessageHandler) List(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case didIDStr != "":
 		didID, parseErr := strconv.ParseInt(didIDStr, 10, 64)
-		if parseErr == nil {
-			messages, err = h.deps.DB.Messages.ListByDID(r.Context(), didID, limit, offset)
-			if err == nil {
-				total, _ = h.deps.DB.Messages.CountByDID(r.Context(), didID)
-			}
-		} else {
-			messages, err = h.deps.DB.Messages.List(r.Context(), limit, offset)
-			if err == nil {
-				total, _ = h.deps.DB.Messages.Count(r.Context())
-			}
+		if parseErr != nil {
+			WriteValidationError(w, "Invalid did_id", []FieldError{{Field: "did_id", Message: "DID ID must be a valid integer"}})
+			return
 		}
+		messages, err = h.deps.DB.Messages.ListByDID(r.Context(), didID, limit, offset)
+		if err != nil {
+			WriteInternalError(w)
+			return
+		}
+		total, err = h.deps.DB.Messages.CountByDID(r.Context(), didID)
 	case direction != "":
 		messages, err = h.deps.DB.Messages.ListByDirection(r.Context(), direction, limit, offset)
-		if err == nil {
-			total, _ = h.deps.DB.Messages.CountByDirection(r.Context(), direction)
+		if err != nil {
+			WriteInternalError(w)
+			return
 		}
+		total, err = h.deps.DB.Messages.CountByDirection(r.Context(), direction)
 	case remoteNumber != "":
 		messages, err = h.deps.DB.Messages.ListByRemoteNumber(r.Context(), remoteNumber, limit, offset)
-		if err == nil {
-			total, _ = h.deps.DB.Messages.CountByRemoteNumber(r.Context(), remoteNumber)
+		if err != nil {
+			WriteInternalError(w)
+			return
 		}
+		total, err = h.deps.DB.Messages.CountByRemoteNumber(r.Context(), remoteNumber)
 	default:
 		messages, err = h.deps.DB.Messages.List(r.Context(), limit, offset)
-		if err == nil {
-			total, _ = h.deps.DB.Messages.Count(r.Context())
+		if err != nil {
+			WriteInternalError(w)
+			return
 		}
+		total, err = h.deps.DB.Messages.Count(r.Context())
 	}
 
 	if err != nil {
@@ -153,7 +174,12 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 	// Convert media URLs to JSON
 	var mediaURLsJSON []byte
 	if len(req.MediaURLs) > 0 {
-		mediaURLsJSON, _ = json.Marshal(req.MediaURLs)
+		var marshalErr error
+		mediaURLsJSON, marshalErr = json.Marshal(req.MediaURLs)
+		if marshalErr != nil {
+			WriteError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid media URLs", nil)
+			return
+		}
 	}
 
 	// Create message record
@@ -184,11 +210,15 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 			twilioSID, sendErr := h.deps.Twilio.SendSMS(did.Number, req.ToNumber, req.Body, req.MediaURLs)
 			if sendErr != nil {
 				slog.Error("Failed to send message via Twilio", "error", sendErr, "message_id", message.ID)
-				h.deps.DB.Messages.UpdateStatus(ctx, message.ID, "failed")
+				if dbErr := h.deps.DB.Messages.UpdateStatus(ctx, message.ID, "failed"); dbErr != nil {
+					slog.Error("Failed to update message status", "error", dbErr, "message_id", message.ID)
+				}
 			} else {
 				message.MessageSID = twilioSID
 				message.Status = "sent"
-				h.deps.DB.Messages.Update(ctx, message)
+				if dbErr := h.deps.DB.Messages.Update(ctx, message); dbErr != nil {
+					slog.Error("Failed to update message", "error", dbErr, "message_id", message.ID)
+				}
 			}
 		}
 	})
@@ -253,14 +283,29 @@ func (h *MessageHandler) GetConversation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-
-	if limit == 0 {
-		limit = 50
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+	limit := 50
+	if limitStr != "" {
+		var parseErr error
+		limit, parseErr = strconv.Atoi(limitStr)
+		if parseErr != nil || limit <= 0 {
+			WriteValidationError(w, "Invalid limit", []FieldError{{Field: "limit", Message: "Limit must be a positive integer"}})
+			return
+		}
 	}
 	if limit > 100 {
 		limit = 100
+	}
+
+	offset := 0
+	if offsetStr != "" {
+		var parseErr error
+		offset, parseErr = strconv.Atoi(offsetStr)
+		if parseErr != nil || offset < 0 {
+			WriteValidationError(w, "Invalid offset", []FieldError{{Field: "offset", Message: "Offset must be a non-negative integer"}})
+			return
+		}
 	}
 
 	messages, err := h.deps.DB.Messages.GetConversation(r.Context(), didID, remoteNumber, limit, offset)
@@ -412,7 +457,15 @@ func (h *MessageHandler) UpdateAutoReply(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req CreateAutoReplyRequest
+	type UpdateAutoReplyRequest struct {
+		DIDID       *int64  `json:"did_id,omitempty"`
+		TriggerType string  `json:"trigger_type,omitempty"`
+		TriggerData string  `json:"trigger_data,omitempty"`
+		ReplyText   string  `json:"reply_text,omitempty"`
+		Enabled     *bool   `json:"enabled,omitempty"`
+	}
+
+	var req UpdateAutoReplyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteValidationError(w, "Invalid request body", nil)
 		return
@@ -427,7 +480,9 @@ func (h *MessageHandler) UpdateAutoReply(w http.ResponseWriter, r *http.Request)
 	if req.ReplyText != "" {
 		rule.ReplyText = req.ReplyText
 	}
-	rule.Enabled = req.Enabled
+	if req.Enabled != nil {
+		rule.Enabled = *req.Enabled
+	}
 	rule.DIDID = req.DIDID
 
 	if err := h.deps.DB.AutoReplies.Update(r.Context(), rule); err != nil {
@@ -457,7 +512,9 @@ func (h *MessageHandler) DeleteAutoReply(w http.ResponseWriter, r *http.Request)
 func toMessageResponse(m *models.Message) *MessageResponse {
 	var mediaURLs []string
 	if len(m.MediaURLs) > 0 {
-		json.Unmarshal(m.MediaURLs, &mediaURLs)
+		if err := json.Unmarshal(m.MediaURLs, &mediaURLs); err != nil {
+			slog.Error("failed to unmarshal media URLs", "error", err, "message_id", m.ID)
+		}
 	}
 
 	var didID int64
@@ -537,13 +594,18 @@ func (h *MessageHandler) Resend(w http.ResponseWriter, r *http.Request) {
 	// Parse media URLs
 	var mediaURLs []string
 	if len(message.MediaURLs) > 0 {
-		json.Unmarshal(message.MediaURLs, &mediaURLs)
+		if err := json.Unmarshal(message.MediaURLs, &mediaURLs); err != nil {
+			WriteError(w, http.StatusBadRequest, ErrCodeValidation, "Invalid media URLs in message", nil)
+			return
+		}
 	}
 
 	// Resend the message
 	twilioSID, sendErr := h.deps.Twilio.SendSMS(message.FromNumber, message.ToNumber, message.Body, mediaURLs)
 	if sendErr != nil {
-		h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "failed")
+		if dbErr := h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "failed"); dbErr != nil {
+			slog.Error("failed to update message status", "error", dbErr, "message_id", message.ID)
+		}
 		WriteError(w, http.StatusBadGateway, ErrCodeBadGateway, "Failed to resend message: "+sendErr.Error(), nil)
 		return
 	}
@@ -551,7 +613,10 @@ func (h *MessageHandler) Resend(w http.ResponseWriter, r *http.Request) {
 	// Update the message record
 	message.MessageSID = twilioSID
 	message.Status = "sent"
-	h.deps.DB.Messages.Update(r.Context(), message)
+	if err := h.deps.DB.Messages.Update(r.Context(), message); err != nil {
+		WriteInternalError(w)
+		return
+	}
 
 	WriteJSON(w, http.StatusOK, toMessageResponse(message))
 }
@@ -594,7 +659,10 @@ func (h *MessageHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) 
 
 	// Update local status
 	message.Status = twilioMsg.Status
-	h.deps.DB.Messages.Update(r.Context(), message)
+	if err := h.deps.DB.Messages.Update(r.Context(), message); err != nil {
+		WriteInternalError(w)
+		return
+	}
 
 	WriteJSON(w, http.StatusOK, toMessageResponse(message))
 }
@@ -624,7 +692,10 @@ func (h *MessageHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 
 	if message.MessageSID == "" {
 		// Message never made it to Twilio, just update local status
-		h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "canceled")
+		if err := h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "canceled"); err != nil {
+			WriteInternalError(w)
+			return
+		}
 		WriteJSON(w, http.StatusOK, map[string]string{"message": "Message canceled"})
 		return
 	}
@@ -640,7 +711,10 @@ func (h *MessageHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "canceled")
+	if err := h.deps.DB.Messages.UpdateStatus(r.Context(), message.ID, "canceled"); err != nil {
+		WriteInternalError(w)
+		return
+	}
 	WriteJSON(w, http.StatusOK, map[string]string{"message": "Message canceled"})
 }
 
@@ -689,10 +763,26 @@ func (h *MessageHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Get total counts
-	total, _ := h.deps.DB.Messages.Count(ctx)
-	unread, _ := h.deps.DB.Messages.CountUnread(ctx)
-	inbound, _ := h.deps.DB.Messages.CountByDirection(ctx, "inbound")
-	outbound, _ := h.deps.DB.Messages.CountByDirection(ctx, "outbound")
+	total, err := h.deps.DB.Messages.Count(ctx)
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+	unread, err := h.deps.DB.Messages.CountUnread(ctx)
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+	inbound, err := h.deps.DB.Messages.CountByDirection(ctx, "inbound")
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+	outbound, err := h.deps.DB.Messages.CountByDirection(ctx, "outbound")
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
 
 	stats := map[string]interface{}{
 		"total":    total,

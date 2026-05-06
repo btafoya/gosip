@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -105,7 +106,9 @@ func (h *WebhookHandler) VoiceStatus(w http.ResponseWriter, r *http.Request) {
 			now := time.Now()
 			cdr.EndedAt = &now
 		}
-		h.deps.DB.CDRs.Update(r.Context(), cdr)
+		if dbErr := h.deps.DB.CDRs.Update(r.Context(), cdr); dbErr != nil {
+			slog.Error("failed to update CDR", "error", dbErr, "call_sid", callSID)
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -125,11 +128,18 @@ func (h *WebhookHandler) VoicemailRecording(w http.ResponseWriter, r *http.Reque
 
 	recordingSID := r.FormValue("RecordingSid")
 	recordingURL := r.FormValue("RecordingUrl")
-	duration, _ := strconv.Atoi(r.FormValue("RecordingDuration"))
+	duration, err := strconv.Atoi(r.FormValue("RecordingDuration"))
+	if err != nil {
+		duration = 0
+	}
 	from := r.FormValue("From")
 	didIDStr := r.FormValue("DidId")
 
-	didID, _ := strconv.ParseInt(didIDStr, 10, 64)
+	didID, err := strconv.ParseInt(didIDStr, 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	// Create voicemail record
 	voicemail := &models.Voicemail{
@@ -142,7 +152,11 @@ func (h *WebhookHandler) VoicemailRecording(w http.ResponseWriter, r *http.Reque
 	}
 	_ = recordingSID // Used by Twilio for transcription requests
 
-	h.deps.DB.Voicemails.Create(r.Context(), voicemail)
+	if err := h.deps.DB.Voicemails.Create(r.Context(), voicemail); err != nil {
+		slog.Error("failed to create voicemail", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
 	// Request transcription if enabled
 	if h.deps.Twilio != nil {
@@ -179,10 +193,18 @@ func (h *WebhookHandler) VoicemailTranscription(w http.ResponseWriter, r *http.R
 	transcriptionText := r.FormValue("TranscriptionText")
 	voicemailIDStr := r.FormValue("VoicemailId")
 
-	voicemailID, _ := strconv.ParseInt(voicemailIDStr, 10, 64)
+	voicemailID, err := strconv.ParseInt(voicemailIDStr, 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	// Update voicemail with transcription
-	h.deps.DB.Voicemails.UpdateTranscript(r.Context(), voicemailID, transcriptionText)
+	if err := h.deps.DB.Voicemails.UpdateTranscript(r.Context(), voicemailID, transcriptionText); err != nil {
+		slog.Error("failed to update voicemail transcript", "error", err, "voicemail_id", voicemailID)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -208,7 +230,10 @@ func (h *WebhookHandler) SMSIncoming(w http.ResponseWriter, r *http.Request) {
 	to := r.FormValue("To")
 	body := r.FormValue("Body")
 	messageSID := r.FormValue("MessageSid")
-	numMedia, _ := strconv.Atoi(r.FormValue("NumMedia"))
+	numMedia, err := strconv.Atoi(r.FormValue("NumMedia"))
+	if err != nil {
+		numMedia = 0
+	}
 
 	// Find DID
 	did, err := h.deps.DB.DIDs.GetByNumber(r.Context(), to)
@@ -226,7 +251,12 @@ func (h *WebhookHandler) SMSIncoming(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	mediaURLsJSON, _ := json.Marshal(mediaURLs)
+	mediaURLsJSON, err := json.Marshal(mediaURLs)
+	if err != nil {
+		slog.Error("failed to marshal media URLs", "error", err)
+		h.respondTwiML(w, "")
+		return
+	}
 
 	// Create message record
 	didID := did.ID
@@ -242,7 +272,11 @@ func (h *WebhookHandler) SMSIncoming(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:  time.Now(),
 	}
 
-	h.deps.DB.Messages.Create(r.Context(), message)
+	if err := h.deps.DB.Messages.Create(r.Context(), message); err != nil {
+		slog.Error("failed to create message", "error", err)
+		h.respondTwiML(w, "")
+		return
+	}
 
 	// Check for auto-reply
 	autoReply := h.checkAutoReply(r.Context(), did.ID, body)
@@ -274,7 +308,9 @@ func (h *WebhookHandler) SMSStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Update message status by finding the message first
 	if msg, err := h.deps.DB.Messages.GetByMessageSID(r.Context(), messageSID); err == nil {
-		h.deps.DB.Messages.UpdateStatus(r.Context(), msg.ID, status)
+		if dbErr := h.deps.DB.Messages.UpdateStatus(r.Context(), msg.ID, status); dbErr != nil {
+			slog.Error("failed to update message status", "error", dbErr, "message_sid", messageSID)
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

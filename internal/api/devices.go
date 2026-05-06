@@ -40,14 +40,29 @@ type DeviceResponse struct {
 
 // List returns all devices
 func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-
-	if limit == 0 {
-		limit = config.DefaultPageSize
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+	limit := config.DefaultPageSize
+	if limitStr != "" {
+		var parseErr error
+		limit, parseErr = strconv.Atoi(limitStr)
+		if parseErr != nil || limit <= 0 {
+			WriteValidationError(w, "Invalid limit", []FieldError{{Field: "limit", Message: "Limit must be a positive integer"}})
+			return
+		}
 	}
 	if limit > config.MaxPageSize {
 		limit = config.MaxPageSize
+	}
+
+	offset := 0
+	if offsetStr != "" {
+		var parseErr error
+		offset, parseErr = strconv.Atoi(offsetStr)
+		if parseErr != nil || offset < 0 {
+			WriteValidationError(w, "Invalid offset", []FieldError{{Field: "offset", Message: "Offset must be a non-negative integer"}})
+			return
+		}
 	}
 
 	devices, err := h.deps.DB.Devices.List(r.Context(), limit, offset)

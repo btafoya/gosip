@@ -181,7 +181,9 @@ func validateSession(ctx context.Context, database *db.DB, token string) (*model
 			// Update database asynchronously
 			if database != nil && database.Sessions != nil {
 				safeGo(func() {
-					_ = database.Sessions.UpdateActivity(context.Background(), token, newExpiry)
+					if err := database.Sessions.UpdateActivity(context.Background(), token, newExpiry); err != nil {
+						slog.Error("failed to update session activity", "error", err)
+					}
 				})
 			}
 
@@ -210,13 +212,17 @@ func validateSession(ctx context.Context, database *db.DB, token string) (*model
 		// Check if session is expired
 		if time.Now().After(session.ExpiresAt) {
 			// Clean up expired session
-			_ = database.Sessions.Delete(ctx, token)
+			if err := database.Sessions.Delete(ctx, token); err != nil {
+				slog.Error("failed to delete expired session", "error", err)
+			}
 			return nil, db.ErrUserNotFound
 		}
 
 		// Refresh session expiry (sliding window)
 		newExpiry := time.Now().Add(SessionDuration)
-		_ = database.Sessions.UpdateActivity(ctx, token, newExpiry)
+		if err := database.Sessions.UpdateActivity(ctx, token, newExpiry); err != nil {
+			slog.Error("failed to update session activity", "error", err)
+		}
 
 		// Update cache
 		cache.mu.Lock()
@@ -247,7 +253,9 @@ func deleteSessionWithDB(ctx context.Context, database *db.DB, token string) {
 
 	// Remove from database
 	if database != nil && database.Sessions != nil {
-		_ = database.Sessions.Delete(ctx, token)
+		if err := database.Sessions.Delete(ctx, token); err != nil {
+			slog.Error("failed to delete session", "error", err)
+		}
 	}
 }
 
