@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/btafoya/gosip/internal/config"
@@ -154,19 +153,17 @@ func (s *Server) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	s.sessions.Add(session)
 	s.incrementCallCount()
 
-	// Basic source validation / logging
+	// Source IP is logged for forensics. We deliberately do NOT classify "is this
+	// from Twilio?" via From-host string match or coarse IP prefix — both are
+	// trivially spoofed and would mislead operators. Per-trunk min_attestation
+	// (planned) or TLS cert pinning are the right enforcement mechanisms.
 	sourceIP := getSourceIP(req)
-	fromHost := ""
-	if req.From() != nil {
-		fromHost = req.From().Address.Host
-	}
-	isTwilio := strings.Contains(fromHost, "twilio") || strings.HasPrefix(sourceIP, "54.") || strings.HasPrefix(sourceIP, "34.")
 	slog.Info("Incoming call",
 		"call_id", callID,
 		"from", fromURI.String(),
 		"to", toURI.String(),
 		"source_ip", sourceIP,
-		"twilio_source", isTwilio,
+		"source_in_twilio_cidr", isTwilioSignalingIP(sourceIP),
 	)
 
 	// Extract called number and look up DID
