@@ -45,6 +45,7 @@ func NewRouter(deps *Dependencies) chi.Router {
 	callHandler := NewCallHandler(deps)
 	mwiHandler := NewMWIHandler(deps)
 	tlsHandler := NewTLSHandler(deps)
+	trunkHandler := NewTrunkHandler(deps)
 
 	// Health endpoints
 	healthHandler := NewHealthHandler("0.1.0")
@@ -125,6 +126,18 @@ func NewRouter(deps *Dependencies) chi.Router {
 				r.Get("/{id}", didHandler.Get)
 				r.Put("/{id}", didHandler.Update)
 				r.Delete("/{id}", didHandler.Delete)
+			})
+
+			// Trunks
+			r.Route("/trunks", func(r chi.Router) {
+				r.Get("/", trunkHandler.List)
+				r.Post("/", trunkHandler.Create)
+				r.Post("/sync", trunkHandler.SyncFromTwilio)
+				r.Get("/{id}", trunkHandler.Get)
+				r.Put("/{id}", trunkHandler.Update)
+				r.Delete("/{id}", trunkHandler.Delete)
+				r.Post("/{id}/assign-did", trunkHandler.AssignDID)
+				r.Post("/{id}/unassign-did", trunkHandler.UnassignDID)
 			})
 
 			// Routes

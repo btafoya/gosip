@@ -26,9 +26,9 @@ func NewDIDRepository(db *sql.DB) *DIDRepository {
 // Create inserts a new DID
 func (r *DIDRepository) Create(ctx context.Context, did *models.DID) error {
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO dids (number, twilio_sid, name, sms_enabled, voice_enabled)
-		VALUES (?, ?, ?, ?, ?)
-	`, did.Number, did.TwilioSID, did.Name, did.SMSEnabled, did.VoiceEnabled)
+		INSERT INTO dids (number, twilio_sid, name, sms_enabled, voice_enabled, trunk_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, did.Number, did.TwilioSID, did.Name, did.SMSEnabled, did.VoiceEnabled, did.TrunkID)
 	if err != nil {
 		return err
 	}
@@ -45,9 +45,9 @@ func (r *DIDRepository) Create(ctx context.Context, did *models.DID) error {
 func (r *DIDRepository) GetByID(ctx context.Context, id int64) (*models.DID, error) {
 	did := &models.DID{}
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled
+		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled, trunk_id
 		FROM dids WHERE id = ?
-	`, id).Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled)
+	`, id).Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled, &did.TrunkID)
 	if err == sql.ErrNoRows {
 		return nil, ErrDIDNotFound
 	}
@@ -61,9 +61,9 @@ func (r *DIDRepository) GetByID(ctx context.Context, id int64) (*models.DID, err
 func (r *DIDRepository) GetByNumber(ctx context.Context, number string) (*models.DID, error) {
 	did := &models.DID{}
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled
+		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled, trunk_id
 		FROM dids WHERE number = ?
-	`, number).Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled)
+	`, number).Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled, &did.TrunkID)
 	if err == sql.ErrNoRows {
 		return nil, ErrDIDNotFound
 	}
@@ -76,9 +76,9 @@ func (r *DIDRepository) GetByNumber(ctx context.Context, number string) (*models
 // Update updates an existing DID
 func (r *DIDRepository) Update(ctx context.Context, did *models.DID) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE dids SET number = ?, twilio_sid = ?, name = ?, sms_enabled = ?, voice_enabled = ?
+		UPDATE dids SET number = ?, twilio_sid = ?, name = ?, sms_enabled = ?, voice_enabled = ?, trunk_id = ?
 		WHERE id = ?
-	`, did.Number, did.TwilioSID, did.Name, did.SMSEnabled, did.VoiceEnabled, did.ID)
+	`, did.Number, did.TwilioSID, did.Name, did.SMSEnabled, did.VoiceEnabled, did.TrunkID, did.ID)
 	return err
 }
 
@@ -91,7 +91,7 @@ func (r *DIDRepository) Delete(ctx context.Context, id int64) error {
 // List returns all DIDs
 func (r *DIDRepository) List(ctx context.Context) ([]*models.DID, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled
+		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled, trunk_id
 		FROM dids ORDER BY number ASC
 	`)
 	if err != nil {
@@ -102,7 +102,7 @@ func (r *DIDRepository) List(ctx context.Context) ([]*models.DID, error) {
 	var dids []*models.DID
 	for rows.Next() {
 		did := &models.DID{}
-		if err := rows.Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled); err != nil {
+		if err := rows.Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled, &did.TrunkID); err != nil {
 			return nil, err
 		}
 		dids = append(dids, did)
@@ -113,7 +113,7 @@ func (r *DIDRepository) List(ctx context.Context) ([]*models.DID, error) {
 // ListVoiceEnabled returns all DIDs with voice enabled
 func (r *DIDRepository) ListVoiceEnabled(ctx context.Context) ([]*models.DID, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled
+		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled, trunk_id
 		FROM dids WHERE voice_enabled = 1 ORDER BY number ASC
 	`)
 	if err != nil {
@@ -124,7 +124,7 @@ func (r *DIDRepository) ListVoiceEnabled(ctx context.Context) ([]*models.DID, er
 	var dids []*models.DID
 	for rows.Next() {
 		did := &models.DID{}
-		if err := rows.Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled); err != nil {
+		if err := rows.Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled, &did.TrunkID); err != nil {
 			return nil, err
 		}
 		dids = append(dids, did)
@@ -135,7 +135,7 @@ func (r *DIDRepository) ListVoiceEnabled(ctx context.Context) ([]*models.DID, er
 // ListSMSEnabled returns all DIDs with SMS enabled
 func (r *DIDRepository) ListSMSEnabled(ctx context.Context) ([]*models.DID, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled
+		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled, trunk_id
 		FROM dids WHERE sms_enabled = 1 ORDER BY number ASC
 	`)
 	if err != nil {
@@ -146,7 +146,29 @@ func (r *DIDRepository) ListSMSEnabled(ctx context.Context) ([]*models.DID, erro
 	var dids []*models.DID
 	for rows.Next() {
 		did := &models.DID{}
-		if err := rows.Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled); err != nil {
+		if err := rows.Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled, &did.TrunkID); err != nil {
+			return nil, err
+		}
+		dids = append(dids, did)
+	}
+	return dids, rows.Err()
+}
+
+// GetByTrunkID returns all DIDs assigned to a trunk
+func (r *DIDRepository) GetByTrunkID(ctx context.Context, trunkID int64) ([]*models.DID, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, number, twilio_sid, name, sms_enabled, voice_enabled, trunk_id
+		FROM dids WHERE trunk_id = ? ORDER BY number ASC
+	`, trunkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dids []*models.DID
+	for rows.Next() {
+		did := &models.DID{}
+		if err := rows.Scan(&did.ID, &did.Number, &did.TwilioSID, &did.Name, &did.SMSEnabled, &did.VoiceEnabled, &did.TrunkID); err != nil {
 			return nil, err
 		}
 		dids = append(dids, did)

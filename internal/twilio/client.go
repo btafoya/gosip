@@ -269,6 +269,7 @@ type IncomingPhoneNumber struct {
 	FriendlyName  string
 	SMSEnabled    bool
 	VoiceEnabled  bool
+	TrunkSID      string
 }
 
 // ListIncomingPhoneNumbers returns phone numbers owned by the account
@@ -306,6 +307,9 @@ func (c *Client) ListIncomingPhoneNumbers(ctx context.Context) ([]IncomingPhoneN
 		if n.Capabilities != nil {
 			number.SMSEnabled = n.Capabilities.Sms
 			number.VoiceEnabled = n.Capabilities.Voice
+		}
+		if n.TrunkSid != nil {
+			number.TrunkSID = *n.TrunkSid
 		}
 		numbers = append(numbers, number)
 	}

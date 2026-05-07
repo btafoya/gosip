@@ -3,6 +3,7 @@ package twilio
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	twilioApi "github.com/twilio/twilio-go/rest/api/v2010"
 	trunking "github.com/twilio/twilio-go/rest/trunking/v1"
@@ -69,6 +70,12 @@ func (c *Client) CreateSIPTrunk(ctx context.Context, friendlyName string, secure
 	if resp.DomainName != nil {
 		trunk.DomainName = *resp.DomainName
 	}
+	if resp.TransferMode != nil {
+		trunk.TransferMode = *resp.TransferMode
+	}
+	if resp.CnamLookupEnabled != nil {
+		trunk.CnamLookupEnabled = *resp.CnamLookupEnabled
+	}
 
 	return trunk, nil
 }
@@ -101,6 +108,12 @@ func (c *Client) GetSIPTrunk(ctx context.Context, trunkSID string) (*SIPTrunk, e
 	if resp.Secure != nil {
 		trunk.Secure = *resp.Secure
 	}
+	if resp.TransferMode != nil {
+		trunk.TransferMode = *resp.TransferMode
+	}
+	if resp.CnamLookupEnabled != nil {
+		trunk.CnamLookupEnabled = *resp.CnamLookupEnabled
+	}
 
 	return trunk, nil
 }
@@ -120,6 +133,8 @@ func (c *Client) ListSIPTrunks(ctx context.Context) ([]*SIPTrunk, error) {
 		return nil, fmt.Errorf("failed to list SIP trunks: %w", err)
 	}
 
+	slog.Info("twilio list trunks", "count", len(resp))
+
 	var trunks []*SIPTrunk
 	for _, t := range resp {
 		trunk := &SIPTrunk{}
@@ -134,6 +149,12 @@ func (c *Client) ListSIPTrunks(ctx context.Context) ([]*SIPTrunk, error) {
 		}
 		if t.Secure != nil {
 			trunk.Secure = *t.Secure
+		}
+		if t.TransferMode != nil {
+			trunk.TransferMode = *t.TransferMode
+		}
+		if t.CnamLookupEnabled != nil {
+			trunk.CnamLookupEnabled = *t.CnamLookupEnabled
 		}
 		trunks = append(trunks, trunk)
 	}

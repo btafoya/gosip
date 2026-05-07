@@ -50,6 +50,7 @@ type DIDResponse struct {
 	PhoneNumber  string          `json:"phone_number"`
 	FriendlyName string          `json:"friendly_name,omitempty"`
 	TwilioSID    string          `json:"twilio_sid,omitempty"`
+	TrunkID      *int64          `json:"trunk_id,omitempty"`
 	Capabilities DIDCapabilities `json:"capabilities"`
 }
 
@@ -220,6 +221,7 @@ func toDIDResponse(did *models.DID) *DIDResponse {
 		PhoneNumber:  did.Number,
 		FriendlyName: did.Name,
 		TwilioSID:    did.TwilioSID,
+		TrunkID:      did.TrunkID,
 		Capabilities: DIDCapabilities{
 			Voice: did.VoiceEnabled,
 			SMS:   did.SMSEnabled,
@@ -256,6 +258,17 @@ func (h *DIDHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) {
 		existingMap[did.Number] = did
 	}
 
+	// Build map of local trunks by Twilio SID for assignment resolution
+	localTrunks, err := h.deps.DB.Trunks.List(r.Context())
+	if err != nil {
+		WriteInternalError(w)
+		return
+	}
+	trunkMap := make(map[string]int64)
+	for _, t := range localTrunks {
+		trunkMap[t.TwilioSID] = t.ID
+	}
+
 	var synced []*DIDResponse
 	var created, updated int
 
@@ -267,6 +280,15 @@ func (h *DIDHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) {
 			existing.VoiceEnabled = tn.VoiceEnabled
 			if existing.Name == "" && tn.FriendlyName != "" {
 				existing.Name = tn.FriendlyName
+			}
+			if tn.TrunkSID != "" {
+				if trunkID, found := trunkMap[tn.TrunkSID]; found {
+					existing.TrunkID = &trunkID
+				} else {
+					slog.Warn("trunk not found locally during DID sync", "twilio_sid", tn.TrunkSID, "number", tn.PhoneNumber)
+				}
+			} else {
+				existing.TrunkID = nil
 			}
 			if err := h.deps.DB.DIDs.Update(r.Context(), existing); err != nil {
 				slog.Error("failed to update DID during sync", "error", err, "did_id", existing.ID)
@@ -282,6 +304,13 @@ func (h *DIDHandler) SyncFromTwilio(w http.ResponseWriter, r *http.Request) {
 				Name:         tn.FriendlyName,
 				SMSEnabled:   tn.SMSEnabled,
 				VoiceEnabled: tn.VoiceEnabled,
+			}
+			if tn.TrunkSID != "" {
+				if trunkID, found := trunkMap[tn.TrunkSID]; found {
+					did.TrunkID = &trunkID
+				} else {
+					slog.Warn("trunk not found locally during DID sync", "twilio_sid", tn.TrunkSID, "number", tn.PhoneNumber)
+				}
 			}
 			if err := h.deps.DB.DIDs.Create(r.Context(), did); err != nil {
 				slog.Error("failed to create DID during sync", "error", err, "number", did.Number)

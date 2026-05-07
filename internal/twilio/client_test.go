@@ -516,6 +516,7 @@ func TestIncomingPhoneNumber(t *testing.T) {
 		FriendlyName: "Main Line",
 		SMSEnabled:   true,
 		VoiceEnabled: true,
+		TrunkSID:     "TK789",
 	}
 
 	if number.SID != "PN123456" {

@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   Phone,
   PhoneCall,
+  Server,
   MessageSquare,
   Voicemail,
   Settings,
@@ -27,6 +28,7 @@ const navigation = [
   { name: 'Devices', href: '/devices', icon: Monitor },
   { name: 'Provisioning', href: '/provisioning', icon: Smartphone },
   { name: 'Phone Numbers', href: '/dids', icon: Phone },
+  { name: 'SIP Trunks', href: '/trunks', icon: Server },
   { name: 'Call Routing', href: '/routes', icon: Route },
   { name: 'Call Control', href: '/call-control', icon: PhoneCall },
   { name: 'Call History', href: '/calls', icon: Phone },

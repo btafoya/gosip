@@ -44,6 +44,7 @@ type DB struct {
 	AutoReplies   *AutoReplyRepository
 	Config        *ConfigRepository
 	Sessions      *SessionRepository
+	Trunks        *TrunkRepository
 
 	// Provisioning repositories
 	ProvisioningTokens   *ProvisioningTokenRepository
@@ -104,6 +105,7 @@ func New(dbPath string) (*DB, error) {
 	db.AutoReplies = NewAutoReplyRepository(conn)
 	db.Config = NewConfigRepository(conn)
 	db.Sessions = NewSessionRepository(conn)
+	db.Trunks = NewTrunkRepository(conn)
 
 	// Provisioning repositories
 	db.ProvisioningTokens = NewProvisioningTokenRepository(conn)
@@ -561,6 +563,7 @@ func (db *DB) RestoreBackup(ctx context.Context, filename string) error {
 	db.AutoReplies = NewAutoReplyRepository(conn)
 	db.Config = NewConfigRepository(conn)
 	db.Sessions = NewSessionRepository(conn)
+	db.Trunks = NewTrunkRepository(conn)
 	db.ProvisioningTokens = NewProvisioningTokenRepository(conn)
 	db.ProvisioningProfiles = NewProvisioningProfileRepository(conn)
 	db.DeviceEvents = NewDeviceEventRepository(conn)

@@ -42,6 +42,11 @@ const router = createRouter({
           component: () => import('@/views/DIDsView.vue')
         },
         {
+          path: 'trunks',
+          name: 'trunks',
+          component: () => import('@/views/TrunksView.vue')
+        },
+        {
           path: 'routes',
           name: 'routes',
           component: () => import('@/views/RoutesView.vue')

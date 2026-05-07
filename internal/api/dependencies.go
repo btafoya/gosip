@@ -42,6 +42,9 @@ type TwilioClient interface {
 	// SIP Trunk Operations
 	ListSIPTrunks(ctx context.Context) ([]*twilio.SIPTrunk, error)
 	CreateSIPTrunk(ctx context.Context, friendlyName string, secure bool) (*twilio.SIPTrunk, error)
+	GetSIPTrunk(ctx context.Context, trunkSID string) (*twilio.SIPTrunk, error)
+	UpdateSIPTrunk(ctx context.Context, trunkSID string, secure bool, friendlyName string) error
+	DeleteSIPTrunk(ctx context.Context, trunkSID string) error
 	GetTrunkTLSStatus(ctx context.Context, trunkSID string) (*twilio.TrunkTLSStatus, error)
 	EnableTLSForTrunk(ctx context.Context, trunkSID string) error
 	DisableTLSForTrunk(ctx context.Context, trunkSID string) error
@@ -49,6 +52,10 @@ type TwilioClient interface {
 	EnsureTrunkFullySecure(ctx context.Context, trunkSID string) error
 	SetOriginationURI(ctx context.Context, trunkSID, sipURI string, priority, weight int) error
 	SetSecureOriginationURI(ctx context.Context, trunkSID, sipURI string, priority, weight int) error
+	AssignPhoneNumberToTrunk(ctx context.Context, trunkSID, phoneNumberSID string) error
+
+	// Voice Operations
+	MakeCall(from, to, url string) (string, error)
 }
 
 // Notifier interface for sending notifications

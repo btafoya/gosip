@@ -31,6 +31,9 @@ type MockTwilioClient struct {
 	IsHealthyFunc                 func() bool
 	RequestTranscriptionFunc      func(recordingSID string, voicemailID int64) error
 	ListIncomingPhoneNumbersFunc  func(ctx context.Context) ([]twilio.IncomingPhoneNumber, error)
+	ListSIPTrunksFunc             func(ctx context.Context) ([]*twilio.SIPTrunk, error)
+	CreateSIPTrunkFunc            func(ctx context.Context, friendlyName string, secure bool) (*twilio.SIPTrunk, error)
+	AssignPhoneNumberToTrunkFunc  func(ctx context.Context, trunkSID, phoneNumberSID string) error
 }
 
 func (m *MockTwilioClient) SendSMS(from, to, body string, mediaURLs []string) (string, error) {
@@ -119,10 +122,16 @@ func (m *MockTwilioClient) ListIncomingPhoneNumbers(ctx context.Context) ([]twil
 // SIP Trunk Operations (stubs for interface compliance)
 
 func (m *MockTwilioClient) ListSIPTrunks(ctx context.Context) ([]*twilio.SIPTrunk, error) {
+	if m.ListSIPTrunksFunc != nil {
+		return m.ListSIPTrunksFunc(ctx)
+	}
 	return []*twilio.SIPTrunk{}, nil
 }
 
 func (m *MockTwilioClient) CreateSIPTrunk(ctx context.Context, friendlyName string, secure bool) (*twilio.SIPTrunk, error) {
+	if m.CreateSIPTrunkFunc != nil {
+		return m.CreateSIPTrunkFunc(ctx, friendlyName, secure)
+	}
 	return &twilio.SIPTrunk{SID: "TK123456789", FriendlyName: friendlyName, Secure: secure}, nil
 }
 
@@ -152,6 +161,29 @@ func (m *MockTwilioClient) SetOriginationURI(ctx context.Context, trunkSID, sipU
 
 func (m *MockTwilioClient) SetSecureOriginationURI(ctx context.Context, trunkSID, sipURI string, priority, weight int) error {
 	return nil
+}
+
+func (m *MockTwilioClient) GetSIPTrunk(ctx context.Context, trunkSID string) (*twilio.SIPTrunk, error) {
+	return &twilio.SIPTrunk{SID: trunkSID, FriendlyName: "Mock Trunk", Secure: true}, nil
+}
+
+func (m *MockTwilioClient) DeleteSIPTrunk(ctx context.Context, trunkSID string) error {
+	return nil
+}
+
+func (m *MockTwilioClient) UpdateSIPTrunk(ctx context.Context, trunkSID string, secure bool, friendlyName string) error {
+	return nil
+}
+
+func (m *MockTwilioClient) AssignPhoneNumberToTrunk(ctx context.Context, trunkSID, phoneNumberSID string) error {
+	if m.AssignPhoneNumberToTrunkFunc != nil {
+		return m.AssignPhoneNumberToTrunkFunc(ctx, trunkSID, phoneNumberSID)
+	}
+	return nil
+}
+
+func (m *MockTwilioClient) MakeCall(from, to, url string) (string, error) {
+	return "CA123456789", nil
 }
 
 // MockNotifier is a mock implementation of Notifier for testing

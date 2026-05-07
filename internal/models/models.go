@@ -58,6 +58,20 @@ type DID struct {
 	Name         string `json:"name,omitempty"`
 	SMSEnabled   bool   `json:"sms_enabled"`
 	VoiceEnabled bool   `json:"voice_enabled"`
+	TrunkID      *int64 `json:"trunk_id,omitempty"`
+}
+
+// Trunk represents a cached Twilio SIP trunk
+type Trunk struct {
+	ID                int64     `json:"id"`
+	TwilioSID         string    `json:"twilio_sid"`
+	FriendlyName      string    `json:"friendly_name,omitempty"`
+	DomainName        string    `json:"domain_name,omitempty"`
+	Secure            bool      `json:"secure"`
+	TransferMode      string    `json:"transfer_mode"`
+	CnamLookupEnabled bool      `json:"cnam_lookup_enabled"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // Route represents a call routing rule
