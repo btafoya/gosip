@@ -11,7 +11,15 @@ import (
 
 var ErrConfigNotFound = errors.New("config key not found")
 
-// ConfigRepository handles database operations for system configuration
+// SECURITY: ConfigRepository stores values as plaintext in SQLite.
+// Sensitive keys (twilio_auth_token, smtp_password, gotify_token, etc.) are
+// readable by anyone with filesystem access to the DB file. Backups also
+// contain these in plaintext. Column-level AES-GCM encryption with the master
+// key is planned (claudedocs/SPEC_ADDENDUM_2026-05-07.md §10) but not yet
+// implemented. Until then: protect data/ permissions (0700) and never share
+// raw DB files.
+//
+// ConfigRepository handles database operations for system configuration.
 type ConfigRepository struct {
 	db *sql.DB
 }
