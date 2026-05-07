@@ -1,6 +1,6 @@
 # GoSIP Project Index
 
-**Generated**: 2025-12-15
+**Generated**: 2026-05-07
 **Version**: 1.0.0
 
 A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twilio bridge PBX system.
@@ -77,6 +77,7 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | `webhooks.go` | Twilio callbacks | `VoiceIncoming()`, `SMSIncoming()` |
 | `system.go` | Configuration and admin | `CompleteSetup()`, `CreateBackup()` |
 | `tls.go` | TLS/SRTP/ZRTP management | `GetEncryptionStatus()` |
+| `trunks.go` | SIP trunk CRUD + DID assignment | `List()`, `SyncFromTwilio()`, `AssignDID()` |
 | `mwi.go`, `mwi_handler.go` | Message Waiting Indicator | `TriggerNotification()` |
 | `health.go` | Health check endpoints | `Health()`, `Ready()`, `Live()` |
 | `middleware.go` | Auth, CORS, logging | `AuthMiddleware()`, `AdminOnlyMiddleware()` |
@@ -103,6 +104,7 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | `provisioning_tokens.go` | `provisioning_tokens` | Token URL management |
 | `provisioning_profiles.go` | `provisioning_profiles` | Vendor config templates |
 | `device_events.go` | `device_events` | Device audit logging |
+| `trunks.go` | `trunks` | `Create()`, `List()`, `GetByTwilioSID()`, `Delete()` |
 | `db.go:46-181` | Connection, migrations | `New()`, `Migrate()` |
 
 ### internal/config/
@@ -121,7 +123,8 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | `User` | Admin/user accounts | `models.go:11-18` |
 | `Device` | SIP devices with provisioning | `models.go:20-39` |
 | `Registration` | Active SIP registrations | `models.go:41-51` |
-| `DID` | Phone numbers | `models.go:53-61` |
+| `DID` | Phone numbers (now with `TrunkID`) | `models.go:53-62` |
+| `Trunk` | Cached Twilio SIP trunk | `models.go:64-74` |
 | `Route` | Call routing rules | `models.go:63-74` |
 | `BlocklistEntry` | Blocked numbers | `models.go:103-110` |
 | `CDR` | Call detail records | `models.go:112-128` |
@@ -156,7 +159,7 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | `client.go:274-314` | Phone number management | `ListIncomingPhoneNumbers()` |
 | `client.go:454-514` | Message fetch/sync | `GetMessage()`, `ListMessages()` |
 | `queue.go` | Message queue with retry | Background processing |
-| `sip_trunk.go` | SIP trunk TLS configuration | Twilio trunk management |
+| `sip_trunk.go` | SIP trunk CRUD + TLS migration | `ListSIPTrunks()`, `CreateSIPTrunk()`, `AssignPhoneNumberToTrunk()` |
 
 ### internal/notifications/
 **Notification system** - Email, push, and alerting.
@@ -240,6 +243,18 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | GET | `/api/dids/{id}` | `didHandler.Get` |
 | PUT | `/api/dids/{id}` | `didHandler.Update` |
 | DELETE | `/api/dids/{id}` | `didHandler.Delete` |
+
+### Trunks (Authenticated)
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/trunks` | `trunkHandler.List` |
+| POST | `/api/trunks` | `trunkHandler.Create` |
+| POST | `/api/trunks/sync` | `trunkHandler.SyncFromTwilio` |
+| GET | `/api/trunks/{id}` | `trunkHandler.Get` |
+| PUT | `/api/trunks/{id}` | `trunkHandler.Update` |
+| DELETE | `/api/trunks/{id}` | `trunkHandler.Delete` |
+| POST | `/api/trunks/{id}/assign-did` | `trunkHandler.AssignDID` |
+| POST | `/api/trunks/{id}/unassign-did` | `trunkHandler.UnassignDID` |
 
 ### Routes (Authenticated)
 | Method | Path | Handler |
@@ -393,6 +408,7 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | `DashboardView.vue` | Main dashboard |
 | `DevicesView.vue` | SIP device management |
 | `DIDsView.vue` | Phone number management |
+| `TrunksView.vue` | SIP trunk management + DID assignment |
 | `RoutesView.vue` | Call routing rules |
 | `CallsView.vue` | Call history |
 | `CallControlView.vue` | Active call management |
@@ -412,6 +428,7 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | `devices.ts` | Device API |
 | `calls.ts` | Call control API |
 | `provisioning.ts` | Provisioning API |
+| `trunks.ts` | SIP trunk API |
 
 ### State Management (`frontend/src/stores/`)
 | Store | Purpose |
@@ -433,12 +450,14 @@ A comprehensive knowledge base and documentation index for the GoSIP SIP-to-Twil
 | `006_add_tls_config.up.sql` | TLS configuration |
 | `007_add_disable_unencrypted.up.sql` | Security hardening |
 | `008_sessions.up.sql` | Session management |
+| `009_trunks.up.sql` | SIP trunks table + `dids.trunk_id` FK |
 
 ### Core Tables
 - `users` - Admin and user accounts
 - `devices` - SIP device registry
 - `registrations` - Active SIP registrations
-- `dids` - Phone numbers (DIDs)
+- `dids` - Phone numbers (DIDs); `trunk_id` FK references `trunks.id`
+- `trunks` - Cached Twilio SIP trunks
 - `routes` - Call routing rules
 - `blocklist` - Blocked numbers
 - `cdrs` - Call detail records
