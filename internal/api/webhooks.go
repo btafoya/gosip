@@ -319,7 +319,6 @@ func (h *WebhookHandler) SMSStatus(w http.ResponseWriter, r *http.Request) {
 // Helper methods
 
 func (h *WebhookHandler) validateSignature(r *http.Request) bool {
-	// Get auth token from config
 	authToken, err := h.deps.DB.Config.Get(r.Context(), "twilio_auth_token")
 	if err != nil || authToken == "" {
 		return false
@@ -330,14 +329,11 @@ func (h *WebhookHandler) validateSignature(r *http.Request) bool {
 		return false
 	}
 
-	// Build validation URL
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
-	}
-	validationURL := scheme + "://" + r.Host + r.URL.Path
+	// Prefer admin-configured public_url to defend against Host-header spoofing
+	// and to handle reverse-proxy TLS termination. Fall back to request-derived
+	// URL with X-Forwarded-Proto when no public_url configured.
+	validationURL := h.buildValidationURL(r)
 
-	// Sort form values and append to URL
 	r.ParseForm()
 	keys := make([]string, 0, len(r.PostForm))
 	for k := range r.PostForm {
@@ -349,12 +345,36 @@ func (h *WebhookHandler) validateSignature(r *http.Request) bool {
 		validationURL += k + r.PostForm.Get(k)
 	}
 
-	// Calculate expected signature
 	mac := hmac.New(sha1.New, []byte(authToken))
 	mac.Write([]byte(validationURL))
 	expectedSignature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(signature), []byte(expectedSignature))
+}
+
+// buildValidationURL constructs the URL Twilio used to compute its signature.
+// Priority:
+//  1. Admin-configured "public_url" config key (e.g. https://gosip.example.com)
+//  2. X-Forwarded-Proto + r.Host when behind a reverse proxy
+//  3. r.TLS-derived scheme + r.Host as final fallback
+//
+// Using public_url is the recommended production setup. It eliminates Host-header
+// spoofing risk and removes the dependency on r.TLS being non-nil (which is false
+// when a TLS-terminating proxy fronts gosip).
+func (h *WebhookHandler) buildValidationURL(r *http.Request) string {
+	publicURL, err := h.deps.DB.Config.Get(r.Context(), "public_url")
+	if err == nil && publicURL != "" {
+		publicURL = strings.TrimRight(publicURL, "/")
+		return publicURL + r.URL.Path
+	}
+
+	scheme := "https"
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	} else if r.TLS == nil {
+		scheme = "http"
+	}
+	return scheme + "://" + r.Host + r.URL.Path
 }
 
 func (h *WebhookHandler) respondTwiML(w http.ResponseWriter, twiml string) {
