@@ -4,10 +4,12 @@ package api
 import (
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/go-chi/httprate"
 )
 
 // NewRouter creates and configures the API router
@@ -20,6 +22,10 @@ func NewRouter(deps *Dependencies) chi.Router {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
+	r.Use(SecurityHeaders)
+	// Global API rate limit: 300 req/min per client IP. Defends against authenticated
+	// resource enumeration (CDRs/voicemails/devices). Webhook routes scoped separately.
+	r.Use(httprate.LimitByIP(300, time.Minute))
 
 	// CORS configuration with secure origin restrictions
 	r.Use(cors.Handler(cors.Options{

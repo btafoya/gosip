@@ -313,6 +313,33 @@ func isTrustedProxy(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// SecurityHeaders applies defense-in-depth response headers.
+// CSP locks scripts/styles to same-origin to mitigate stored-XSS via user-generated
+// content (caller IDs, voicemail metadata, device usernames). HSTS enforces TLS
+// for browsers. X-Frame-Options blocks clickjacking. X-Content-Type-Options
+// prevents MIME sniffing. Referrer-Policy limits referrer leakage.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob:; "+
+				"font-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"frame-ancestors 'none'; "+
+				"base-uri 'self'; "+
+				"form-action 'self'")
+		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // generateRandomToken creates a cryptographically secure random string token
 // Uses crypto/rand for unpredictable token generation resistant to brute-force attacks
 func generateRandomToken(length int) (string, error) {
